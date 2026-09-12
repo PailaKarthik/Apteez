@@ -1,0 +1,7 @@
+{
+  "extends": "@apteez/tsconfig/nestjs.json",
+  "compilerOptions": {
+    "baseUrl": "./"
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

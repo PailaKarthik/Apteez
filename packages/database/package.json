@@ -1,0 +1,36 @@
+{
+  "name": "@apteez/database",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Prisma schema, migrations and client for the ApteeZ PostgreSQL database",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint src prisma/seed.ts",
+    "db:generate": "prisma generate",
+    "db:migrate": "dotenv -e ../../.env -- prisma migrate dev",
+    "db:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
+    "db:seed": "dotenv -e ../../.env -- tsx prisma/seed.ts",
+    "db:studio": "dotenv -e ../../.env -- prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.0.0"
+  },
+  "devDependencies": {
+    "@apteez/eslint-config": "workspace:*",
+    "@apteez/tsconfig": "workspace:*",
+    "@nestjs/common": "^10.4.0",
+    "dotenv-cli": "^7.3.0",
+    "eslint": "^9.12.0",
+    "prisma": "^6.0.0",
+    "reflect-metadata": "^0.2.0",
+    "rxjs": "^7.8.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.6.3"
+  }
+}

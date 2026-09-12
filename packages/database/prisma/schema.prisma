@@ -1,0 +1,1485 @@
+// ApteeZ production database architecture (Prompts 01 + 02).
+//
+// PostgreSQL is the permanent source of truth. Redis must never hold
+// permanent data; object binaries live in object storage (keys only here).
+//
+// Conventions used throughout:
+// - UUID primary keys (@db.Uuid): public identifiers are non-sequential.
+// - @db.Timestamptz(3) on every timestamp: dates are stored in UTC at the
+//   database layer regardless of session time zones.
+// - createdAt / updatedAt on persistent entities. Append-only history tables
+//   (submissions, ledger, rating history) intentionally carry only their
+//   event timestamp — they are never updated, only inserted.
+// - deletedAt (soft delete) only where moderation/removal must be reversible
+//   (discussions). Everywhere else, archival enums or isActive flags apply.
+// - Explicit join models (never implicit many-to-many) so constraints and
+//   future metadata stay expressible.
+// - Slugs are stable, URL-safe identifiers scoped to their parent; numeric
+//   IDs are never exposed as foreign keys to clients.
+// - Storage columns hold object KEYS, never provider URLs — the storage
+//   layer mints URLs at read time.
+// - Service layer (later prompts) maps these models to DTOs; controllers
+//   must never return raw entities (correct answers, review notes and
+//   moderation data stay hidden by construction, not by convention).
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [citext, pg_trgm]
+}
+
+// ─── Controlled vocabularies ─────────────────────────────────────────────
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum ProblemStatus {
+  DRAFT
+  PENDING_REVIEW
+  PUBLISHED
+  ARCHIVED
+  REJECTED
+}
+
+enum ProblemContentMode {
+  TEXT_ONLY
+  IMAGE_ONLY
+  TEXT_AND_IMAGE
+}
+
+enum ProblemAssetKind {
+  QUESTION_IMAGE
+  EXPLANATION_IMAGE
+  OTHER
+}
+
+// Contribution review state. Kept separate from ProblemStatus on purpose: an
+// APPROVED contribution still needs an independent library publication step.
+enum ContributionStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum SubmissionContext {
+  PRACTICE
+  CHALLENGE
+  CONTEST
+}
+
+// Attempt lifecycle. A row is created as STARTED (the user engaged with the
+// question), then atomically claimed into SUBMITTED when an answer is
+// accepted. Competitive contexts (challenge/contest) add stricter rules on
+// top of this same model rather than duplicating it.
+enum AttemptStatus {
+  STARTED
+  SUBMITTED
+  ABANDONED
+  EXPIRED
+}
+
+// Rating domains. Never a single universal rating on User: challenge and
+// contest ratings evolve independently, and new scopes extend this enum.
+enum RatingScope {
+  CHALLENGE
+  CONTEST
+}
+
+// Outcome of the asynchronous rating step for a finalized challenge. The
+// challenge result itself is committed independently, so a rating failure
+// never rolls back a completed match — it only marks the rating as retryable.
+enum RatingProcessingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum PointTransactionType {
+  EARN
+  SPEND
+  ADJUST
+}
+
+// Contest lifecycle. Transitions are validated server-side; clients can never
+// move a contest between states directly. REGISTRATION_OPEN is a distinct,
+// discoverable state rather than a boolean, so "can I join?" is a status check.
+enum ContestStatus {
+  DRAFT
+  PUBLISHED
+  REGISTRATION_OPEN
+  LIVE
+  ENDED
+  CANCELLED
+  ARCHIVED
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+  COMPLETED
+}
+
+// 1v1 challenge lifecycle. Transitions are validated server-side; clients can
+// never move a challenge between states directly.
+enum ChallengeStatus {
+  MATCHMAKING
+  MATCHED
+  COUNTDOWN
+  LIVE
+  COMPLETED
+  CANCELLED
+  ABANDONED
+  EXPIRED
+}
+
+// Who won, as decided by the scoring/tie rules (never by rating).
+enum ChallengeOutcome {
+  PLAYER1_WIN
+  PLAYER2_WIN
+  DRAW
+  ABANDONED
+  EXPIRED
+  CANCELLED
+}
+
+// Why the challenge ended — consumed by the rating engine.
+enum ChallengeCompletionReason {
+  COMPLETED
+  TIMER_EXPIRED
+  ABANDONED
+  DISCONNECT_TIMEOUT
+  CANCELLED
+}
+
+// A single user's result in a rated challenge. Derived from the challenge
+// outcome but stored explicitly on history rows so filters stay indexable.
+enum RatingResult {
+  WIN
+  LOSS
+  DRAW
+}
+
+// ─── Identity & access control ───────────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  // CITEXT: email/username uniqueness is case-insensitive at the database
+  // level, so `User@x.com` and `user@x.com` can never become two accounts.
+  email         String    @unique @db.Citext
+  emailVerified DateTime? @db.Timestamptz(3)
+  // Scrypt hash (see auth PasswordService). Null for OAuth-only accounts.
+  passwordHash  String?
+  username      String?   @unique @db.Citext
+  displayName   String
+  // Object-storage key, not a URL. Nullable: no fake values for missing data.
+  avatarKey     String?
+  country       String?
+  // University / college affiliation, free text.
+  institution   String?
+  bio           String?   @db.Text
+  // Deactivation flag instead of deletion: audit tables Restrict user removal.
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+
+  roles                   UserRole[]
+  identities              AuthIdentity[]
+  contributions           Contribution[]           @relation("ContributionContributor")
+  reviewedContributions   Contribution[]           @relation("ContributionReviewer")
+  createdProblems         Problem[]
+  submissions             Submission[]
+  favoriteCollections     FavoriteCollection[]
+  ratings                 UserRating[]
+  pointTransactions       PointTransaction[]
+  achievements            UserAchievement[]
+  streak                  UserStreak?
+  contestParticipations   ContestParticipant[]
+  organizedContests       Contest[]
+  contestAnswers          ContestAnswer[]
+  contestResults          ContestResult[]
+  contestRatings          ContestRating[]
+  contestRatingHistory    ContestRatingHistory[]
+  contestSuspiciousEvents ContestSuspiciousEvent[]
+  eventParticipations     EventParticipation[]
+  organizedEvents         Event[]
+  discussionPosts         DiscussionPost[]
+  discussionReplies       DiscussionReply[]
+  discussionReactions     DiscussionReaction[]
+  discussionReports       DiscussionReport[]
+  challengesAsPlayer1     Challenge[]              @relation("ChallengePlayer1")
+  challengesAsPlayer2     Challenge[]              @relation("ChallengePlayer2")
+  challengesWon           Challenge[]              @relation("ChallengeWinner")
+  challengeAnswers        ChallengeAnswer[]
+  challengeRatings        ChallengeRating[]
+  challengeRatingHistory  ChallengeRatingHistory[]
+  ratingHistoryOpponents  ChallengeRatingHistory[] @relation("ChallengeRatingHistoryOpponent")
+  learningProgress        UserLearningProgress[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  name        String           @unique
+  description String?
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @db.Timestamptz(3)
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  action      String
+  resource    String
+  description String?
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @db.Timestamptz(3)
+  roles       RolePermission[]
+
+  @@unique([action, resource])
+  @@map("permissions")
+}
+
+model UserRole {
+  userId     String   @db.Uuid
+  roleId     String   @db.Uuid
+  assignedAt DateTime @default(now()) @db.Timestamptz(3)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  // Supports "all users holding role X" without scanning the composite key.
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+// External login identities (Google OAuth today, more providers later).
+// One provider identity links to exactly one user — enforced by the
+// composite unique — so the same Google account can never fork into two
+// users. Email alone is never treated as an identity record.
+model AuthIdentity {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider       String
+  providerUserId String
+  // Snapshot of the provider-verified email at link time (audit aid only).
+  email          String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("auth_identities")
+}
+
+// ─── Aptitude content hierarchy ──────────────────────────────────────────
+// Category → Topic → Subtopic → Problem. Subtopic is optional per problem;
+// stable slugs (scoped to the parent) are the client-facing identifiers.
+
+model Category {
+  id                     String                   @id @default(uuid()) @db.Uuid
+  name                   String                   @unique
+  slug                   String                   @unique
+  description            String?
+  // UI icon key (e.g. "calculator"); the client maps it to an icon set.
+  icon                   String?
+  sortOrder              Int                      @default(0)
+  isActive               Boolean                  @default(true)
+  createdAt              DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime                 @updatedAt @db.Timestamptz(3)
+  topics                 Topic[]
+  problems               Problem[]
+  challenges             Challenge[]
+  challengeRatings       ChallengeRating[]
+  challengeRatingHistory ChallengeRatingHistory[]
+  // 1:1 domain → path mapping. The FK-side is optional-safe: a category may
+  // exist before its learning path is authored, so the back-reference is
+  // nullable and carries the onDelete rule (required in one-to-one relations).
+  learningPath           LearningPath?
+
+  @@map("categories")
+}
+
+model Topic {
+  id            String         @id @default(uuid()) @db.Uuid
+  categoryId    String         @db.Uuid
+  name          String
+  slug          String
+  description   String?
+  sortOrder     Int            @default(0)
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @db.Timestamptz(3)
+  category      Category       @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  subtopics     Subtopic[]
+  problems      Problem[]
+  contributions Contribution[]
+  learningTopics LearningTopic[]
+
+  @@unique([categoryId, slug])
+  @@unique([categoryId, name])
+  @@index([categoryId])
+  @@map("topics")
+}
+
+model Subtopic {
+  id          String    @id @default(uuid()) @db.Uuid
+  topicId     String    @db.Uuid
+  name        String
+  slug        String
+  description String?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+  topic       Topic     @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  problems    Problem[]
+
+  @@unique([topicId, slug])
+  @@unique([topicId, name])
+  @@index([topicId])
+  @@map("subtopics")
+}
+
+// ─── Problems, options, assets ───────────────────────────────────────────
+
+model Problem {
+  id          String             @id @default(uuid()) @db.Uuid
+  title       String
+  // Nullable: IMAGE_ONLY problems carry their content via ProblemAsset.
+  statement   String?            @db.Text
+  // Authoring-time attribute so list views never join assets just for a badge.
+  contentMode ProblemContentMode @default(TEXT_ONLY)
+  difficulty  Difficulty         @default(MEDIUM)
+  // Entry rating for ordering/adaptive selection; the rating ENGINE lives in
+  // a later prompt and writes UserRating, never this column.
+  rating      Float              @default(1500)
+  status      ProblemStatus      @default(DRAFT)
+  explanation String?            @db.Text
+  shortcut    String?            @db.Text
+  source      String?
+  sourceYear  Int?
+  creatorId   String?            @db.Uuid
+  creator     User?              @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  categoryId  String             @db.Uuid
+  category    Category           @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  topicId     String             @db.Uuid
+  topic       Topic              @relation(fields: [topicId], references: [id], onDelete: Restrict)
+  subtopicId  String?            @db.Uuid
+  subtopic    Subtopic?          @relation(fields: [subtopicId], references: [id], onDelete: SetNull)
+  // Set once on first publication; powers "new problems" feeds and auditing.
+  publishedAt DateTime?          @db.Timestamptz(3)
+  createdAt   DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime           @updatedAt @db.Timestamptz(3)
+
+  assets             ProblemAsset[]
+  options            ProblemOption[]
+  contributions      Contribution[]
+  submissions        Submission[]
+  favorites          FavoriteCollectionItem[]
+  exams              ProblemExam[]
+  challengeQuestions ChallengeQuestion[]
+  contestQuestions   ContestQuestion[]
+  learningLessons    LearningLessonProblem[]
+
+  @@index([status])
+  @@index([categoryId, status])
+  @@index([topicId, status])
+  @@index([difficulty])
+  @@index([rating])
+  @@index([createdAt])
+  @@index([creatorId])
+  @@map("problems")
+}
+
+model ProblemAsset {
+  id        String           @id @default(uuid()) @db.Uuid
+  problemId String           @db.Uuid
+  problem   Problem          @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  kind      ProblemAssetKind
+  // Object-storage key. URLs are minted by the storage layer at read time.
+  objectKey String
+  mimeType  String
+  sizeBytes Int
+  // Display order; non-unique index supports ORDER BY without join cost.
+  position  Int              @default(0)
+  altText   String?
+  createdAt DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@index([problemId, position])
+  @@map("problem_assets")
+}
+
+model ProblemOption {
+  id         String       @id @default(uuid()) @db.Uuid
+  problemId  String       @db.Uuid
+  problem    Problem      @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  // Backend-owned display order; clients must never rely on array position.
+  position   Int
+  // Nullable: IMAGE_ONLY options carry their content via assetKey.
+  text       String?      @db.Text
+  // Object-storage key for image-backed options. isCorrect stays server-side:
+  // list/detail serializers must strip it wherever answers stay hidden.
+  assetKey   String?
+  isCorrect  Boolean      @default(false)
+  createdAt  DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime     @updatedAt @db.Timestamptz(3)
+  selectedIn Submission[]
+
+  // The ordering clients see is enforced here, not in application code.
+  @@unique([problemId, position])
+  @@index([problemId])
+  @@map("problem_options")
+}
+
+// ─── Contributions & review audit ────────────────────────────────────────
+// A contribution is NEVER deleted after approval — the record (who submitted
+// what, who reviewed it, what it became) is the audit trail. Approval writes
+// a new Problem and links it via resultingProblemId; the submitted snapshot
+// (statement/options/explanation) stays frozen on the contribution itself.
+
+model Contribution {
+  id                 String             @id @default(uuid()) @db.Uuid
+  contributorId      String             @db.Uuid
+  contributor        User               @relation("ContributionContributor", fields: [contributorId], references: [id], onDelete: Restrict)
+  title              String
+  statement          String             @db.Text
+  // Exact submitted option set (texts + flagged answer), frozen at submit time.
+  options            Json
+  explanation        String?            @db.Text
+  difficulty         Difficulty?
+  topicId            String?            @db.Uuid
+  topic              Topic?             @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  sourceUrl          String?
+  status             ContributionStatus @default(PENDING)
+  reviewerId         String?            @db.Uuid
+  reviewer           User?              @relation("ContributionReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  // Internal review note. Must never be exposed to ordinary users.
+  reviewerNote       String?            @db.Text
+  submittedAt        DateTime           @default(now()) @db.Timestamptz(3)
+  reviewedAt         DateTime?          @db.Timestamptz(3)
+  resultingProblemId String?            @unique @db.Uuid
+  resultingProblem   Problem?           @relation(fields: [resultingProblemId], references: [id], onDelete: SetNull)
+  createdAt          DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime           @updatedAt @db.Timestamptz(3)
+
+  @@index([contributorId])
+  @@index([status])
+  @@index([submittedAt])
+  @@index([reviewerId])
+  @@map("contributions")
+}
+
+// ─── Exam tagging ────────────────────────────────────────────────────────
+// Reusable many-to-many tags (SSC, Banking, …). Never comma-separated strings.
+
+model ExamTag {
+  id          String        @id @default(uuid()) @db.Uuid
+  name        String        @unique
+  slug        String        @unique
+  description String?
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime      @updatedAt @db.Timestamptz(3)
+  problems    ProblemExam[]
+  learningLessons LearningLessonExam[]
+
+  @@map("exam_tags")
+}
+
+model ProblemExam {
+  problemId String  @db.Uuid
+  problem   Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  examTagId String  @db.Uuid
+  examTag   ExamTag @relation(fields: [examTagId], references: [id], onDelete: Cascade)
+
+  @@id([problemId, examTagId])
+  @@index([examTagId])
+  @@map("problem_exams")
+}
+
+// ─── Favorites & personal collections ────────────────────────────────────
+
+model FavoriteCollection {
+  id          String                   @id @default(uuid()) @db.Uuid
+  ownerId     String                   @db.Uuid
+  owner       User                     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name        String
+  isDefault   Boolean                  @default(false)
+  // Exactly one default collection per user, enforced at the database level:
+  // the default collection stores ownerId here, all others store NULL, and
+  // Postgres treats NULLs as distinct in unique indexes (partial-index
+  // emulation — Prisma cannot express WHERE-clause indexes directly).
+  defaultSlot String?                  @unique @db.Uuid
+  createdAt   DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime                 @updatedAt @db.Timestamptz(3)
+  items       FavoriteCollectionItem[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+  @@map("favorite_collections")
+}
+
+model FavoriteCollectionItem {
+  id           String             @id @default(uuid()) @db.Uuid
+  collectionId String             @db.Uuid
+  collection   FavoriteCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  problemId    String             @db.Uuid
+  problem      Problem            @relation(fields: [problemId], references: [id], onDelete: Restrict)
+  addedAt      DateTime           @default(now()) @db.Timestamptz(3)
+
+  // Duplicate saves within one collection are impossible by construction.
+  @@unique([collectionId, problemId])
+  @@index([collectionId, addedAt])
+  @@index([problemId])
+  @@map("favorite_collection_items")
+}
+
+// ─── Practice & submission history ───────────────────────────────────────
+// One row per attempt. The row is inserted when the user engages with the
+// question (status = STARTED) and finalized exactly once by an atomic
+// conditional update (status = SUBMITTED). Finalized rows are never mutated,
+// so accuracy, solved state, weak-area detection and speed analysis remain
+// derivable from history by later prompts.
+//
+// `isCorrect` is null until submission; correctness is only ever written by
+// the server. `startedAt` is the authoritative clock — client timing is kept
+// separately as supporting data and never trusted as the source of truth.
+
+model Submission {
+  id                     String            @id @default(uuid()) @db.Uuid
+  userId                 String            @db.Uuid
+  user                   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  problemId              String            @db.Uuid
+  problem                Problem           @relation(fields: [problemId], references: [id], onDelete: Restrict)
+  status                 AttemptStatus     @default(STARTED)
+  selectedOptionId       String?           @db.Uuid
+  selectedOption         ProblemOption?    @relation(fields: [selectedOptionId], references: [id], onDelete: SetNull)
+  isCorrect              Boolean?
+  // Server-computed duration (submittedAt − startedAt), in seconds.
+  timeSpentSeconds       Int?
+  // Untrusted hint from the client; recorded for diagnostics only.
+  clientTimeSpentSeconds Int?
+  startedAt              DateTime          @default(now()) @db.Timestamptz(3)
+  submittedAt            DateTime?         @db.Timestamptz(3)
+  context                SubmissionContext @default(PRACTICE)
+  createdAt              DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime          @updatedAt @db.Timestamptz(3)
+
+  @@index([userId, submittedAt])
+  @@index([problemId, submittedAt])
+  @@index([problemId])
+  @@index([userId, problemId])
+  @@index([userId, context, submittedAt])
+  @@index([context, status])
+  @@map("submissions")
+}
+
+// ─── Competitive ratings (foundation only) ───────────────────────────────
+// Ratings live here, keyed by scope — never as columns on User. The rating
+// ALGORITHM lands in a later prompt; this schema only guarantees storage +
+// a complete audit trail of every change.
+
+model UserRating {
+  userId       String          @db.Uuid
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scope        RatingScope
+  // Integers only: the rating engine rounds to whole points, so a Float would
+  // only invite floating-point drift across reads and writes.
+  rating       Int             @default(1500)
+  gamesPlayed  Int             @default(0)
+  lastPlayedAt DateTime?       @db.Timestamptz(3)
+  createdAt    DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime        @updatedAt @db.Timestamptz(3)
+  history      RatingHistory[]
+
+  @@id([userId, scope])
+  @@index([scope, rating])
+  @@map("user_ratings")
+}
+
+model RatingHistory {
+  id           String      @id @default(uuid()) @db.Uuid
+  userId       String      @db.Uuid
+  scope        RatingScope
+  userRating   UserRating  @relation(fields: [userId, scope], references: [userId, scope], onDelete: Cascade)
+  ratingBefore Int
+  ratingAfter  Int
+  delta        Int
+  // Machine-readable cause, e.g. "challenge:win" or "contest:rank:12".
+  reason       String
+  // Match / contest / event identifier that caused the change, if any.
+  referenceId  String?
+  createdAt    DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, scope, createdAt])
+  @@map("rating_history")
+}
+
+// ─── Points, achievements, streaks (foundation only) ─────────────────────
+// Points are NOT rating and challenge rating is NOT contest rating: rewards
+// flow through an auditable ledger; competitive standing through UserRating.
+
+model PointTransaction {
+  id           String               @id @default(uuid()) @db.Uuid
+  userId       String               @db.Uuid
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount       Int
+  // Running balance after this entry: makes the ledger independently verifiable.
+  balanceAfter Int
+  type         PointTransactionType
+  // Machine-readable cause, e.g. "weekly_target:complete".
+  reason       String
+  referenceId  String?
+  createdAt    DateTime             @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, createdAt])
+  @@map("point_transactions")
+}
+
+model Achievement {
+  id          String            @id @default(uuid()) @db.Uuid
+  key         String            @unique
+  name        String
+  description String?
+  // Points awarded on unlock; 0 for badge-only achievements.
+  points      Int               @default(0)
+  isActive    Boolean           @default(true)
+  createdAt   DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(3)
+  unlocks     UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String      @id @default(uuid()) @db.Uuid
+  userId        String      @db.Uuid
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievementId String      @db.Uuid
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Restrict)
+  unlockedAt    DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@unique([userId, achievementId])
+  @@index([userId])
+  @@map("user_achievements")
+}
+
+model UserStreak {
+  userId         String    @id @db.Uuid
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentCount   Int       @default(0)
+  longestCount   Int       @default(0)
+  // Date-only comparison makes "did they practice today" a single predicate.
+  lastActiveDate DateTime? @db.Date
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@map("user_streaks")
+}
+
+// ─── Contests ────────────────────────────────────────────────────────────
+// A contest is a fixed, pre-selected question set with a shared start time.
+// The question set is frozen on publication so a contest stays reproducible
+// even if the underlying problems are later edited or archived.
+
+// Default contest scoring is solved-count: correct answers add to the solved
+// count, wrong answers never subtract. Kept as an enum so future variants
+// (negative marking, weighted points) extend this without touching results.
+enum ContestScoringModel {
+  SOLVED_COUNT
+}
+
+enum ContestResultVisibility {
+  ALWAYS
+  AFTER_END
+  AFTER_REGISTRATION_CLOSE
+}
+
+// Participant lifecycle. Deliberately richer than a boolean: REGISTERED is not
+// the same as ACTIVE (the user has entered), and AUTO_SUBMITTED is a distinct,
+// auditable outcome from a manual SUBMITTED.
+enum ContestParticipantStatus {
+  REGISTERED
+  ACTIVE
+  SUBMITTED
+  AUTO_SUBMITTED
+  DISQUALIFIED
+}
+
+enum ContestResultStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// Client-side integrity signals. Stored separately from the competitive result
+// so administrators can review them later without them ever affecting scores.
+enum ContestSuspiciousEventType {
+  TAB_HIDDEN
+  TAB_VISIBLE
+  WINDOW_BLUR
+  WINDOW_FOCUS
+  COPY
+  PASTE
+  FULLSCREEN_ENTER
+  FULLSCREEN_EXIT
+}
+
+model Contest {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  title                String
+  slug                 String                  @unique
+  description          String?                 @db.Text
+  // Contest rules shown to participants; free text, never executable.
+  rules                String?                 @db.Text
+  status               ContestStatus           @default(DRAFT)
+  // Indicative difficulty for discovery; per-question difficulty lives on the
+  // referenced Problem rows.
+  difficulty           Difficulty              @default(MEDIUM)
+  startsAt             DateTime                @db.Timestamptz(3)
+  endsAt               DateTime                @db.Timestamptz(3)
+  // Configured contest length in seconds. The effective end for a participant
+  // is min(endsAt, participant.startedAt + durationSeconds).
+  durationSeconds      Int
+  registrationOpensAt  DateTime?               @db.Timestamptz(3)
+  registrationClosesAt DateTime?               @db.Timestamptz(3)
+  maxParticipants      Int?
+  // Denormalized count of the frozen question set; rendered on cards so list
+  // views never join ContestQuestion.
+  questionCount        Int                     @default(0)
+  scoringModel         ContestScoringModel     @default(SOLVED_COUNT)
+  resultVisibility     ContestResultVisibility @default(AFTER_END)
+  // When true, a participant may see solved/wrong markers live. Default false:
+  // a live contest never reveals correctness.
+  revealAnswersLive    Boolean                 @default(false)
+  createdById          String?                 @db.Uuid
+  createdBy            User?                   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  publishedAt          DateTime?               @db.Timestamptz(3)
+  endedAt              DateTime?               @db.Timestamptz(3)
+  // Asynchronous rating bookkeeping; a rating failure never rolls back results.
+  ratingStatus         ContestResultStatus     @default(PENDING)
+  ratingProcessedAt    DateTime?               @db.Timestamptz(3)
+  ratingAttempts       Int                     @default(0)
+  createdAt            DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime                @updatedAt @db.Timestamptz(3)
+
+  questions        ContestQuestion[]
+  participants     ContestParticipant[]
+  results          ContestResult[]
+  ratingHistory    ContestRatingHistory[]
+  suspiciousEvents ContestSuspiciousEvent[]
+  contestAnswers   ContestAnswer[]
+
+  @@index([status, startsAt])
+  @@index([status, endsAt])
+  @@index([slug])
+  @@map("contests")
+}
+
+// The frozen question set. `position` is the server-owned order; the composite
+// uniques make duplicate assignment impossible.
+model ContestQuestion {
+  id        String   @id @default(uuid()) @db.Uuid
+  contestId String   @db.Uuid
+  contest   Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problemId String   @db.Uuid
+  problem   Problem  @relation(fields: [problemId], references: [id], onDelete: Restrict)
+  position  Int
+  // Per-question points for future weighted contests; the SOLVED_COUNT model
+  // ignores this and treats every question as worth one solve.
+  points    Int      @default(1)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  answers ContestAnswer[]
+
+  @@unique([contestId, position])
+  @@unique([contestId, problemId])
+  @@index([contestId])
+  @@map("contest_questions")
+}
+
+// One row per (contest, user). The participant row is created at registration
+// and reused as the session row when the user enters — a refresh restores it
+// rather than starting a second participation.
+model ContestParticipant {
+  id              String                   @id @default(uuid()) @db.Uuid
+  contestId       String                   @db.Uuid
+  contest         Contest                  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  userId          String                   @db.Uuid
+  user            User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status          ContestParticipantStatus @default(REGISTERED)
+  // Contest rating snapshot taken when the participant first enters, consumed
+  // by the rating engine. Null until the participant starts.
+  ratingBefore    Int?
+  // Authoritative timeline for this participant. startedAt is set the first
+  // time they enter; effectiveEndAt = min(contest.endsAt, startedAt + duration).
+  startedAt       DateTime?                @db.Timestamptz(3)
+  effectiveEndAt  DateTime?                @db.Timestamptz(3)
+  submittedAt     DateTime?                @db.Timestamptz(3)
+  lastSeenAt      DateTime?                @db.Timestamptz(3)
+  currentPosition Int                      @default(0)
+  registeredAt    DateTime                 @default(now()) @db.Timestamptz(3)
+  createdAt       DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime                 @updatedAt @db.Timestamptz(3)
+
+  answers       ContestAnswer[]
+  result        ContestResult?
+  ratingHistory ContestRatingHistory[]
+
+  @@unique([contestId, userId])
+  @@index([contestId, status])
+  @@index([contestId, userId])
+  @@index([userId])
+  @@map("contest_participants")
+}
+
+// One row per answered question. Re-submitting the same question updates this
+// row (idempotent by the composite unique), so answer changes are supported
+// without ever creating duplicates. Correctness is server-computed only.
+model ContestAnswer {
+  id                String             @id @default(uuid()) @db.Uuid
+  contestId         String             @db.Uuid
+  contest           Contest            @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  participantId     String             @db.Uuid
+  participant       ContestParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  contestQuestionId String             @db.Uuid
+  contestQuestion   ContestQuestion    @relation(fields: [contestQuestionId], references: [id], onDelete: Cascade)
+  userId            String             @db.Uuid
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  selectedOptionId  String?            @db.Uuid
+  // Null until the contest is evaluated; never exposed while live.
+  isCorrect         Boolean?
+  markedForReview   Boolean            @default(false)
+  // Server-derived timing from the authoritative contest clock.
+  answeredAt        DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime           @updatedAt @db.Timestamptz(3)
+
+  @@unique([contestQuestionId, participantId])
+  @@index([contestId, participantId])
+  @@index([participantId, markedForReview])
+  @@map("contest_answers")
+}
+
+// The finalized, immutable result for one participant. Ranking reads only this
+// table, so standings never depend on mutable question data. Exactly one row
+// per participant is guaranteed by the unique participantId.
+model ContestResult {
+  id                String              @id @default(uuid()) @db.Uuid
+  contestId         String              @db.Uuid
+  contest           Contest             @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  participantId     String              @unique @db.Uuid
+  participant       ContestParticipant  @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  userId            String              @db.Uuid
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  solvedCount       Int                 @default(0)
+  wrongCount        Int                 @default(0)
+  unansweredCount   Int                 @default(0)
+  // Default model: score == solvedCount. Stored explicitly for future models.
+  score             Int                 @default(0)
+  // Official completion time: seconds from participant start to finalization.
+  completionSeconds Int
+  rank              Int?
+  status            ContestResultStatus @default(PENDING)
+  finalizedAt       DateTime            @db.Timestamptz(3)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime            @updatedAt @db.Timestamptz(3)
+
+  @@unique([contestId, userId])
+  @@index([contestId, rank])
+  @@index([contestId, score(sort: Desc), completionSeconds])
+  @@index([userId])
+  @@map("contest_results")
+}
+
+// Contest rating is per (user) — a single global contest standing, independent
+// of challenge ratings. Prompt 10's per-domain challenge ratings are never
+// touched by contest participation.
+model ContestRating {
+  userId         String    @id @db.Uuid
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating         Int       @default(1000)
+  contestsPlayed Int       @default(0)
+  bestRank       Int?
+  lastPlayedAt   DateTime? @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([rating(sort: Desc), userId])
+  @@map("contest_ratings")
+}
+
+// Append-only audit of contest rating changes. The unique (contestId, userId)
+// is what makes rating processing idempotent under retries and races.
+model ContestRatingHistory {
+  id            String             @id @default(uuid()) @db.Uuid
+  userId        String             @db.Uuid
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contestId     String             @db.Uuid
+  contest       Contest            @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  participantId String             @db.Uuid
+  participant   ContestParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  ratingBefore  Int
+  ratingAfter   Int
+  ratingChange  Int
+  rank          Int
+  score         Int
+  fieldSize     Int
+  createdAt     DateTime           @default(now()) @db.Timestamptz(3)
+
+  @@unique([contestId, userId])
+  @@index([userId, createdAt])
+  @@index([contestId])
+  @@map("contest_rating_history")
+}
+
+// Integrity signals, stored off the competitive path. A moderator can review
+// them; they never change a score or rank by themselves.
+model ContestSuspiciousEvent {
+  id            String                     @id @default(uuid()) @db.Uuid
+  contestId     String                     @db.Uuid
+  contest       Contest                    @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  participantId String                     @db.Uuid
+  type          ContestSuspiciousEventType
+  detail        String?
+  createdAt     DateTime                   @default(now()) @db.Timestamptz(3)
+  user          User?                      @relation(fields: [userId], references: [id])
+  userId        String?                    @db.Uuid
+
+  @@index([contestId, createdAt])
+  @@index([participantId])
+  @@map("contest_suspicious_events")
+}
+
+// ─── Learning (Prompt 12) ────────────────────────────────────────────────
+// Structured learning sits on top of the existing taxonomy: a LearningPath is
+// anchored to one Category (an aptitude domain), topics anchor to Topics, and
+// every practice link points at an existing Problem row — no second problem
+// repository. Content publication is separate from taxonomy review.
+
+// Publication state for learning content. Users only ever see PUBLISHED; the
+// service layer filters the rest so draft/reviewer internals never leak.
+enum LearningContentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+// Lesson-level progress. STARTED means engaged (opened + acknowledged), not
+// merely opened; COMPLETED requires the explicit server-side completion
+// action. Never derived from a client-reported percentage.
+enum LearningProgressStatus {
+  STARTED
+  COMPLETED
+}
+
+// Future-compatible access metadata: core content is FREE today; the field
+// exists so premium material can be added later without a schema migration
+// or affecting current free content.
+enum LearningAccessLevel {
+  FREE
+  PREMIUM
+}
+
+// One learning path per aptitude domain (Category). The unique categoryId is
+// what makes the domain → path mapping 1:1 and cheap to resolve.
+model LearningPath {
+  id               String                @id @default(uuid()) @db.Uuid
+  slug             String                @unique
+  title            String
+  description      String?               @db.Text
+  categoryId       String                @unique @db.Uuid
+  category         Category              @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  status           LearningContentStatus @default(DRAFT)
+  difficulty       Difficulty            @default(MEDIUM)
+  icon             String?
+  estimatedMinutes Int
+  accessLevel      LearningAccessLevel   @default(FREE)
+  order            Int                   @default(0)
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
+
+  topics LearningTopic[]
+
+  @@index([status, order])
+  @@map("learning_paths")
+}
+
+// A topic groups concepts/lessons inside one path (e.g. Percentages under
+// Quantitative Aptitude). Anchored to the shared taxonomy Topic where one
+// applies, so practice links resolve through the existing problem filters.
+model LearningTopic {
+  id               String                @id @default(uuid()) @db.Uuid
+  pathId           String                @db.Uuid
+  path             LearningPath          @relation(fields: [pathId], references: [id], onDelete: Cascade)
+  slug             String
+  title            String
+  summary          String?               @db.Text
+  topicId          String?               @db.Uuid
+  topic            Topic?                @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  status           LearningContentStatus @default(DRAFT)
+  order            Int                   @default(0)
+  lessonCount      Int                   @default(0)
+  estimatedMinutes Int                   @default(0)
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
+
+  concepts LearningConcept[]
+  lessons  LearningLesson[]
+
+  @@unique([pathId, slug])
+  @@index([pathId, order])
+  @@index([status])
+  @@map("learning_topics")
+}
+
+// A concept is a named grouping inside a topic (formula families, tricks).
+// Lessons belong to a concept where one applies; standalone lessons are
+// allowed too (concept is nullable) so simple topics stay simple.
+model LearningConcept {
+  id        String                @id @default(uuid()) @db.Uuid
+  topicId   String                @db.Uuid
+  topic     LearningTopic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  slug      String
+  title     String
+  status    LearningContentStatus @default(DRAFT)
+  order     Int                   @default(0)
+  createdAt DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime              @updatedAt @db.Timestamptz(3)
+
+  lessons LearningLesson[]
+
+  @@unique([topicId, slug])
+  @@index([topicId, order])
+  @@map("learning_concepts")
+}
+
+// The atomic unit of study. Content is a structured block array (JSON):
+// [{ type: 'text'|'formula'|'example'|'note'|'image', ... }], rendered by a
+// single shared renderer. Blocks are authored data, not arbitrary HTML — the
+// renderer validates/renders each known type so content stays safe.
+model LearningLesson {
+  id               String                @id @default(uuid()) @db.Uuid
+  topicId          String                @db.Uuid
+  topic            LearningTopic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  conceptId        String?               @db.Uuid
+  concept          LearningConcept?      @relation(fields: [conceptId], references: [id], onDelete: SetNull)
+  slug             String
+  title            String
+  status           LearningContentStatus @default(DRAFT)
+  difficulty       Difficulty            @default(MEDIUM)
+  content          Json
+  estimatedMinutes Int                   @default(5)
+  accessLevel      LearningAccessLevel   @default(FREE)
+  order            Int                   @default(0)
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
+
+  problems LearningLessonProblem[]
+  exams    LearningLessonExam[]
+  progress UserLearningProgress[]
+
+  @@unique([topicId, slug])
+  @@index([topicId, order])
+  @@index([status])
+  @@map("learning_lessons")
+}
+
+// Structured practice link: a lesson may recommend existing Problems (by
+// (lessonId, problemId) unique) plus optional filters for a broader practice
+// set (e.g. "5 medium Percentages questions" → existing Practice system).
+model LearningLessonProblem {
+  id            String         @id @default(uuid()) @db.Uuid
+  lessonId      String         @db.Uuid
+  lesson        LearningLesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  problemId     String         @unique @db.Uuid
+  problem       Problem        @relation(fields: [problemId], references: [id], onDelete: Restrict)
+  practiceCount Int            @default(5)
+  order         Int            @default(0)
+  createdAt     DateTime       @default(now()) @db.Timestamptz(3)
+
+  @@unique([lessonId, problemId])
+  @@index([problemId])
+  @@map("learning_lesson_problems")
+}
+
+// Exam-context association (reuse of the shared ExamTag system). Learning
+// content may be relevant to SSC/Banking/NQT etc. via (lessonId, examTagId).
+model LearningLessonExam {
+  id        String         @id @default(uuid()) @db.Uuid
+  lessonId  String         @db.Uuid
+  lesson    LearningLesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  examTagId String         @db.Uuid
+  examTag   ExamTag        @relation(fields: [examTagId], references: [id], onDelete: Restrict)
+
+  @@unique([lessonId, examTagId])
+  @@index([examTagId])
+  @@map("learning_lesson_exams")
+}
+
+// One row per (user, lesson). The composite unique is what prevents duplicate
+// progress records; lastViewedAt powers "Continue Learning"; the
+// (userId, lastViewedAt) index keeps the resume pointer cheap to query.
+model UserLearningProgress {
+  id           String                 @id @default(uuid()) @db.Uuid
+  userId       String                 @db.Uuid
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonId     String                 @db.Uuid
+  lesson       LearningLesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  status       LearningProgressStatus @default(STARTED)
+  lastViewedAt DateTime               @default(now()) @db.Timestamptz(3)
+  completedAt  DateTime?              @db.Timestamptz(3)
+  startedAt    DateTime               @default(now()) @db.Timestamptz(3)
+
+  @@unique([userId, lessonId])
+  @@index([userId, lastViewedAt])
+  @@index([userId, status])
+  @@index([lessonId])
+  @@map("user_learning_progress")
+}
+
+
+// ─── Events (minimal boundaries; logic in a later prompt) ────────────────
+
+model Event {
+  id             String               @id @default(uuid()) @db.Uuid
+  title          String
+  slug           String               @unique
+  description    String?              @db.Text
+  status         EventStatus          @default(DRAFT)
+  startsAt       DateTime             @db.Timestamptz(3)
+  endsAt         DateTime?            @db.Timestamptz(3)
+  location       String?
+  organizerId    String?              @db.Uuid
+  organizer      User?                @relation(fields: [organizerId], references: [id], onDelete: SetNull)
+  createdAt      DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime             @updatedAt @db.Timestamptz(3)
+  participations EventParticipation[]
+
+  @@index([status, startsAt])
+  @@map("events")
+}
+
+model EventParticipation {
+  id       String   @id @default(uuid()) @db.Uuid
+  eventId  String   @db.Uuid
+  event    Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId   String   @db.Uuid
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
+  @@map("event_participations")
+}
+
+// ─── Discussions (Prompt 13) ─────────────────────────────────────────────
+// Community threads over the shared taxonomy. Soft deletion (deletedAt)
+// keeps moderation reversible; everyday reads filter it out at the service
+// layer. Counter columns (replyCount, reactionCount, lastActivityAt) are
+// denormalized for cheap listing and are rebuilt from the authoritative
+// child rows inside the same transaction as every mutation.
+
+enum DiscussionReactionType {
+  UPVOTE
+  DOWNVOTE
+}
+
+enum DiscussionReportReason {
+  SPAM
+  ABUSE
+  OFF_TOPIC
+  INAPPROPRIATE
+  OTHER
+}
+
+enum DiscussionReportStatus {
+  OPEN
+  REVIEWING
+  RESOLVED
+  DISMISSED
+}
+
+model DiscussionPost {
+  id             String              @id @default(uuid()) @db.Uuid
+  authorId       String              @db.Uuid
+  author         User                @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  title          String
+  body           String              @db.Text
+  // Free-form topic tags; searched with a GIN index, never a second table.
+  tags           String[]            @default([])
+  // Optional link to the taxonomy problem a thread is about (no FK: a
+  // problem can be deleted while the discussion stays readable).
+  problemId      String?             @db.Uuid
+  isPinned       Boolean             @default(false)
+  isLocked       Boolean             @default(false)
+  isResolved     Boolean             @default(false)
+  viewCount      Int                 @default(0)
+  // Net score (UPVOTE - DOWNVOTE), rebuilt from DiscussionReaction rows.
+  reactionCount  Int                 @default(0)
+  replyCount     Int                 @default(0)
+  lastActivityAt DateTime            @default(now()) @db.Timestamptz(3)
+  createdAt      DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime            @updatedAt @db.Timestamptz(3)
+  deletedAt      DateTime?           @db.Timestamptz(3)
+  replies        DiscussionReply[]
+  reactions      DiscussionReaction[]
+  reports        DiscussionReport[]
+
+  @@index([lastActivityAt])
+  @@index([isPinned, lastActivityAt])
+  @@index([authorId])
+  @@index([problemId])
+  @@index([tags], type: Gin)
+  @@map("discussion_posts")
+}
+
+model DiscussionReply {
+  id                 String               @id @default(uuid()) @db.Uuid
+  postId             String               @db.Uuid
+  post               DiscussionPost       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId           String               @db.Uuid
+  author             User                 @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  body               String               @db.Text
+  isAcceptedSolution Boolean              @default(false)
+  reactionCount      Int                  @default(0)
+  createdAt          DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime             @updatedAt @db.Timestamptz(3)
+  deletedAt          DateTime?            @db.Timestamptz(3)
+  reactions          DiscussionReaction[]
+  reports            DiscussionReport[]
+
+  @@index([postId, createdAt])
+  @@index([postId, isAcceptedSolution])
+  @@map("discussion_replies")
+}
+
+model DiscussionReaction {
+  id        String                 @id @default(uuid()) @db.Uuid
+  userId    String                 @db.Uuid
+  user      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId    String?                @db.Uuid
+  post      DiscussionPost?        @relation(fields: [postId], references: [id], onDelete: Cascade)
+  replyId   String?                @db.Uuid
+  reply     DiscussionReply?       @relation(fields: [replyId], references: [id], onDelete: Cascade)
+  type      DiscussionReactionType
+  createdAt DateTime               @default(now()) @db.Timestamptz(3)
+
+  @@unique([userId, postId])
+  @@unique([userId, replyId])
+  @@index([postId])
+  @@index([replyId])
+  @@map("discussion_reactions")
+}
+
+model DiscussionReport {
+  id         String                 @id @default(uuid()) @db.Uuid
+  reporterId String                 @db.Uuid
+  reporter   User                   @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  postId     String?                @db.Uuid
+  post       DiscussionPost?        @relation(fields: [postId], references: [id], onDelete: Cascade)
+  replyId    String?                @db.Uuid
+  reply      DiscussionReply?       @relation(fields: [replyId], references: [id], onDelete: Cascade)
+  reason     DiscussionReportReason
+  detail     String?                @db.Text
+  status     DiscussionReportStatus @default(OPEN)
+  createdAt  DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime               @updatedAt @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+  @@index([postId])
+  @@index([replyId])
+  @@map("discussion_reports")
+}
+
+// ─── 1v1 challenges ──────────────────────────────────────────────────────
+// PostgreSQL is the system of record for every completed challenge. Redis is
+// only used for ephemeral matchmaking queues and live coordination.
+
+model Challenge {
+  id                    String                     @id @default(uuid()) @db.Uuid
+  // Domain is the aptitude category slug; the FK keeps taxonomy integrity.
+  domainSlug            String
+  categoryId            String                     @db.Uuid
+  category              Category                   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  player1Id             String                     @db.Uuid
+  player1               User                       @relation("ChallengePlayer1", fields: [player1Id], references: [id], onDelete: Restrict)
+  player2Id             String                     @db.Uuid
+  player2               User                       @relation("ChallengePlayer2", fields: [player2Id], references: [id], onDelete: Restrict)
+  // Rating snapshots at match time — consumed by the rating engine. Whole
+  // points, matching ChallengeRating so no rounding is invented at match time.
+  player1RatingSnapshot Int
+  player2RatingSnapshot Int
+  status                ChallengeStatus            @default(MATCHMAKING)
+  outcome               ChallengeOutcome?
+  completionReason      ChallengeCompletionReason?
+  winnerId              String?                    @db.Uuid
+  winner                User?                      @relation("ChallengeWinner", fields: [winnerId], references: [id], onDelete: SetNull)
+  player1Score          Int?
+  player2Score          Int?
+  player1Correct        Int?
+  player2Correct        Int?
+  player1Wrong          Int?
+  player2Wrong          Int?
+  player1Unanswered     Int?
+  player2Unanswered     Int?
+  questionCount         Int
+  durationSeconds       Int
+  minReadingSeconds     Int
+  // Rating engine bookkeeping. The challenge is finalized independently of
+  // rating; this tracks whether the (idempotent) rating step has run.
+  ratingStatus          RatingProcessingStatus     @default(PENDING)
+  ratingProcessedAt     DateTime?                  @db.Timestamptz(3)
+  ratingAttempts        Int                        @default(0)
+  // Authoritative server timeline.
+  matchedAt             DateTime?                  @db.Timestamptz(3)
+  startedAt             DateTime?                  @db.Timestamptz(3)
+  endsAt                DateTime?                  @db.Timestamptz(3)
+  endedAt               DateTime?                  @db.Timestamptz(3)
+  createdAt             DateTime                   @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime                   @updatedAt @db.Timestamptz(3)
+
+  questions     ChallengeQuestion[]
+  answers       ChallengeAnswer[]
+  ratingHistory ChallengeRatingHistory[]
+
+  @@index([player1Id, createdAt])
+  @@index([player2Id, createdAt])
+  @@index([status])
+  @@index([domainSlug])
+  @@index([ratingStatus])
+  @@map("challenges")
+}
+
+model ChallengeQuestion {
+  id          String    @id @default(uuid()) @db.Uuid
+  challengeId String    @db.Uuid
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  problemId   String    @db.Uuid
+  problem     Problem   @relation(fields: [problemId], references: [id], onDelete: Restrict)
+  // Server-owned sequence; both players receive the same order.
+  position    Int
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+
+  answers ChallengeAnswer[]
+
+  @@unique([challengeId, position])
+  @@unique([challengeId, problemId])
+  @@index([challengeId])
+  @@map("challenge_questions")
+}
+
+// Per-domain competitive rating. Deliberately separate from UserRating (whose
+// scope is a fixed enum): challenge rating is per aptitude domain and starts
+// at 1000. Prompt 10's rating engine writes RatingHistory against this row;
+// Prompt 08 only reads snapshots for matchmaking and stores them on Challenge.
+model ChallengeRating {
+  userId       String    @db.Uuid
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domainSlug   String
+  categoryId   String    @db.Uuid
+  category     Category  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  // Whole points. The source of truth for competitive standing; tiers and
+  // win rates are derived at read time and never persisted.
+  rating       Int       @default(1000)
+  gamesPlayed  Int       @default(0)
+  wins         Int       @default(0)
+  losses       Int       @default(0)
+  draws        Int       @default(0)
+  lastPlayedAt DateTime? @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@id([userId, domainSlug])
+  // Leaderboard ordering: domain + rating DESC (+ deterministic tiebreak on
+  // userId, which is unique per row so it is a stable secondary order).
+  @@index([domainSlug, rating(sort: Desc), userId])
+  @@index([categoryId])
+  @@map("challenge_ratings")
+}
+
+// Append-only audit of every challenge-driven rating change. One row per
+// (challenge, user) — the unique key is what makes rating processing
+// idempotent: a retried job collides here instead of double-applying. The row
+// records both sides of the match so a user's progression is reconstructable
+// without joining the challenge again.
+model ChallengeRatingHistory {
+  id                   String           @id @default(uuid()) @db.Uuid
+  userId               String           @db.Uuid
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domainSlug           String
+  categoryId           String           @db.Uuid
+  category             Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  challengeId          String           @db.Uuid
+  challenge            Challenge        @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  opponentId           String?          @db.Uuid
+  opponent             User?            @relation("ChallengeRatingHistoryOpponent", fields: [opponentId], references: [id], onDelete: SetNull)
+  ratingBefore         Int
+  ratingAfter          Int
+  ratingChange         Int
+  opponentRatingBefore Int
+  opponentRatingAfter  Int
+  // Raw challenge outcome plus this user's own result, so history can be
+  // filtered by WIN/LOSS/DRAW without comparing two columns at read time.
+  outcome              ChallengeOutcome
+  result               RatingResult
+  score                Int
+  opponentScore        Int
+  createdAt            DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@unique([challengeId, userId])
+  @@index([userId, createdAt])
+  @@index([userId, domainSlug, createdAt])
+  @@index([userId, result, createdAt])
+  @@index([challengeId])
+  @@map("challenge_rating_history")
+}
+
+model ChallengeAnswer {
+  id                  String            @id @default(uuid()) @db.Uuid
+  challengeId         String            @db.Uuid
+  challenge           Challenge         @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  challengeQuestionId String            @db.Uuid
+  challengeQuestion   ChallengeQuestion @relation(fields: [challengeQuestionId], references: [id], onDelete: Cascade)
+  playerId            String            @db.Uuid
+  player              User              @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  selectedOptionId    String?           @db.Uuid
+  isCorrect           Boolean
+  // Server-derived timing from the challenge clock.
+  answeredAt          DateTime          @default(now()) @db.Timestamptz(3)
+  responseTimeMs      Int?
+  clientReportedMs    Int?
+  createdAt           DateTime          @default(now()) @db.Timestamptz(3)
+
+  @@unique([challengeQuestionId, playerId])
+  @@index([challengeId, playerId])
+  @@map("challenge_answers")
+}

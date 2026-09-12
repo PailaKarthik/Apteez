@@ -1,0 +1,169 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * ApteeZ design tokens — single visual source of truth.
+ *
+ * Structure (Figma visual language):
+ *   surfaces .... background / elevated / hover / card / popover
+ *   text ........ foreground / muted-foreground / subtle
+ *   brand ....... primary (restrained violet) + accent tint
+ *   semantic .... success / warning / destructive / gold
+ *   line ........ border / input / ring
+ *
+ * All components consume these through Tailwind mappings in
+ * tailwind.config.ts — never raw hex values inline.
+ *
+ * Personality: mature, premium, minimal, competitive. Light mode is a soft
+ * neutral off-white; dark mode a deep near-black with elevated cards and
+ * subtle borders. The accent is deliberately restrained.
+ */
+:root {
+  /* Surfaces */
+  --background: 40 20% 97%;
+  --elevated: 0 0% 100%;
+  --hover: 224 14% 94%;
+  --card: 0 0% 100%;
+  --card-foreground: 224 20% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 224 20% 12%;
+
+  /* Text */
+  --foreground: 224 20% 12%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 224 8% 40%;
+  --subtle-foreground: 224 8% 52%;
+
+  /* Brand */
+  --primary: 252 78% 56%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 14% 95%;
+  --secondary-foreground: 224 16% 20%;
+  --accent: 252 80% 96%;
+  --accent-foreground: 252 70% 44%;
+
+  /* Semantic */
+  --destructive: 0 68% 48%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 152 58% 34%;
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 44%;
+  --warning-foreground: 40 90% 98%;
+  --gold: 42 85% 48%;
+
+  /* Line + focus */
+  --border: 220 13% 89%;
+  --input: 220 13% 86%;
+  --ring: 252 78% 56%;
+
+  /* Shape + depth */
+  --radius: 0.75rem;
+  --shadow-sm: 0 1px 2px 0 hsl(224 20% 12% / 0.05);
+  --shadow-md: 0 2px 6px -1px hsl(224 20% 12% / 0.07), 0 1px 2px hsl(224 20% 12% / 0.05);
+  --shadow-lg: 0 10px 24px -6px hsl(224 20% 12% / 0.12), 0 2px 6px -2px hsl(224 20% 12% / 0.06);
+
+  /* Motion (restrained, fast) */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dark {
+  /* Surfaces: deep near-black with elevated cards */
+  --background: 228 22% 6%;
+  --elevated: 227 20% 9%;
+  --hover: 226 20% 13%;
+  --card: 227 20% 9%;
+  --card-foreground: 220 14% 96%;
+  --popover: 227 20% 10%;
+  --popover-foreground: 220 14% 96%;
+
+  /* Text: high contrast */
+  --foreground: 220 14% 96%;
+  --muted: 226 18% 14%;
+  --muted-foreground: 224 9% 64%;
+  --subtle-foreground: 224 8% 56%;
+
+  /* Brand */
+  --primary: 252 90% 72%;
+  --primary-foreground: 252 56% 12%;
+  --secondary: 226 18% 15%;
+  --secondary-foreground: 220 14% 92%;
+  --accent: 252 45% 17%;
+  --accent-foreground: 252 85% 82%;
+
+  /* Semantic */
+  --destructive: 0 72% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 152 55% 48%;
+  --success-foreground: 152 80% 8%;
+  --warning: 40 92% 56%;
+  --warning-foreground: 40 90% 10%;
+  --gold: 44 90% 58%;
+
+  /* Line + focus: subtle borders */
+  --border: 226 16% 15%;
+  --input: 226 16% 18%;
+  --ring: 252 90% 72%;
+
+  /* Depth */
+  --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.4);
+  --shadow-md: 0 2px 6px -1px hsl(0 0% 0% / 0.45), 0 1px 2px hsl(0 0% 0% / 0.4);
+  --shadow-lg: 0 10px 24px -6px hsl(0 0% 0% / 0.55), 0 2px 6px -2px hsl(0 0% 0% / 0.45);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
+  }
+  ::selection {
+    @apply bg-primary/25;
+  }
+  /* Visible, consistent keyboard focus on every interactive element. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+  /* Numeric/statistical data aligns optically in monospace. */
+  .font-metric {
+    font-family: var(--font-metric), ui-monospace, 'SFMono-Regular', Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  /* Restrained motion; honor the OS-level preference entirely. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+  /* Single global scrollbar treatment (webkit). */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-muted-foreground/25;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}

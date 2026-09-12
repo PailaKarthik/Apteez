@@ -1,0 +1,22 @@
+{
+  "name": "@apteez/types",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared TypeScript contracts for the ApteeZ monorepo (API envelopes, error codes, domain enums)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@apteez/eslint-config": "workspace:*",
+    "@apteez/tsconfig": "workspace:*",
+    "eslint": "^9.12.0",
+    "typescript": "^5.6.3"
+  }
+}

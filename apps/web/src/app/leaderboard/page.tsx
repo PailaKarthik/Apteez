@@ -1,0 +1,18 @@
+import { pageMetadata } from '@/lib/metadata';
+import { PageHeader } from '@/components/shared/page-header';
+import { PageStack } from '@/components/layout/page-container';
+import { LeaderboardBoard } from '@/components/leaderboard/leaderboard-board';
+
+export const metadata = pageMetadata('Leaderboard', 'ApteeZ global and sectional rankings.');
+
+export default function LeaderboardPage(): React.JSX.Element {
+  return (
+    <PageStack>
+      <PageHeader
+        title="Leaderboard"
+        description="Per-domain challenge ratings, ranked globally or by university."
+      />
+      <LeaderboardBoard />
+    </PageStack>
+  );
+}

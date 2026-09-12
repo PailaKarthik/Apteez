@@ -1,0 +1,8 @@
+{
+  "$schema": "https://docs.nestjs.com/cli/monorepo",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "deleteOutDir": true
+  }
+}

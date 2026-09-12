@@ -1,0 +1,25 @@
+{
+  "name": "@apteez/config",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Framework-agnostic shared configuration for ApteeZ (brand, navigation, feature flags)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@apteez/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@apteez/eslint-config": "workspace:*",
+    "@apteez/tsconfig": "workspace:*",
+    "eslint": "^9.12.0",
+    "typescript": "^5.6.3"
+  }
+}

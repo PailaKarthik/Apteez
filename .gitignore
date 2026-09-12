@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+.turbo/
+
+# Prisma
+*.db
+*.db-journal
+
+# Local runtime data (e.g. local storage provider)
+.data/
+
+# Test output
+coverage/
+*.lcov
+
+# TypeScript
+*.tsbuildinfo
+
+# Environment files (never commit real secrets)
+.env
+.env.*
+!.env.example
+!apps/web/.env.example
+!packages/database/.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# npm / pnpm
+.pnpm-debug.log*
