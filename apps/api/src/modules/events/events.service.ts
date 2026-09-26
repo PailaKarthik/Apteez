@@ -153,6 +153,9 @@ export class EventsService {
   // ─── Discovery ──────────────────────────────────────────────────────────
 
   async list(query: EventListQuery, caller?: Caller): Promise<PaginatedData<EventSummaryDto>> {
+    // Advance due statuses before filtering: otherwise the live tab can only
+    // ever fill when somebody opens each event's detail page first.
+    await this.sweepEventStatuses();
     const cacheKey = this.listCacheKey(query, caller);
     if (!caller && cacheKey) {
       const cached = await this.cacheGet<PaginatedData<EventSummaryDto>>(cacheKey);
@@ -343,7 +346,10 @@ export class EventsService {
       throw new EventValidationError('Paid events are not enabled yet. Create a free event.');
     }
     if (input.organizationId) {
-      await this.requireOrgAccess(input.organizationId, caller);
+      // Hosting for an organization makes you a member of it — membership
+      // is open-join anyway, so this never blocks creation, it just keeps
+      // the organizer roster truthful.
+      await this.ensureOrgMembership(input.organizationId, caller);
     }
     const problemIds = [...new Set(input.problemIds)];
     if (problemIds.length > 0) {
@@ -1384,7 +1390,161 @@ export class EventsService {
     if (!event) {
       throw new EventNotFoundError();
     }
-    return event;
+    // Every read converges the lifecycle: without this, an event whose start
+    // passed sits in "upcoming" until somebody presses a manage button, so
+    // registered users can never enter and the live tab stays empty.
+    return this.maybeAdvanceEvent(event);
+  }
+
+  /**
+   * Discovery-time bulk flips (two cheap writes). Overdue closes run in the
+   * background, bounded — detail reads converge them via maybeAdvanceEvent
+   * regardless. Never throws: discovery must survive a sweep failure.
+   */
+  private async sweepEventStatuses(): Promise<void> {
+    const now = new Date();
+    const flips: Array<{
+      where: Prisma.EventWhereInput;
+      to: 'REGISTRATION_OPEN' | 'LIVE' | 'REGISTRATION_CLOSED';
+    }> = [
+      {
+        where: {
+          status: 'PUBLISHED',
+          OR: [{ registrationStartAt: null }, { registrationStartAt: { lte: now } }],
+          startAt: { gt: now },
+        },
+        to: 'REGISTRATION_OPEN',
+      },
+      {
+        where: {
+          status: { in: ['PUBLISHED', 'REGISTRATION_OPEN', 'REGISTRATION_CLOSED'] },
+          startAt: { lte: now },
+          endAt: { gt: now },
+        },
+        to: 'LIVE',
+      },
+      {
+        where: {
+          status: 'REGISTRATION_OPEN',
+          registrationEndAt: { lte: now },
+          startAt: { gt: now },
+        },
+        to: 'REGISTRATION_CLOSED',
+      },
+    ];
+    for (const flip of flips) {
+      try {
+        await this.prisma.event.updateMany({ where: flip.where, data: { status: flip.to } });
+      } catch (error) {
+        this.logger.warn(
+          `event.sweep-flip-failed ${error instanceof Error ? error.message : String(error)}`,
+          'Events',
+        );
+        return;
+      }
+    }
+    let overdue: Array<{ id: string }> = [];
+    try {
+      overdue = await this.prisma.event.findMany({
+        where: {
+          status: { in: ['PUBLISHED', 'REGISTRATION_OPEN', 'REGISTRATION_CLOSED', 'LIVE'] },
+          endAt: { lte: now },
+        },
+        select: { id: true },
+        orderBy: { endAt: 'asc' },
+        take: 10,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `event.sweep-scan-failed ${error instanceof Error ? error.message : String(error)}`,
+        'Events',
+      );
+      return;
+    }
+    if (overdue.length > 0) {
+      void (async () => {
+        for (const row of overdue) {
+          try {
+            await this.maybeAdvanceEvent(await this.requireEvent(row.id));
+          } catch {
+            // Gone or raced — the next sweep converges.
+          }
+        }
+      })();
+    }
+  }
+
+  /**
+   * Due-status advancement for a single loaded row. Cheap timestamp checks
+   * first — the write happens only when a transition is actually due.
+   * COMPLETED also recomputes ranks (background: never blocks the read).
+   */
+  private async maybeAdvanceEvent(event: EventRow): Promise<EventRow> {
+    const now = new Date();
+    let next: EventRow['status'] | null = null;
+    if (
+      event.status !== 'DRAFT' &&
+      event.status !== 'CANCELLED' &&
+      event.status !== 'ARCHIVED' &&
+      event.status !== 'COMPLETED' &&
+      now >= event.endAt
+    ) {
+      next = 'COMPLETED';
+    } else if (
+      (event.status === 'PUBLISHED' ||
+        event.status === 'REGISTRATION_OPEN' ||
+        event.status === 'REGISTRATION_CLOSED') &&
+      now >= event.startAt &&
+      now < event.endAt
+    ) {
+      next = 'LIVE';
+    } else if (
+      event.status === 'PUBLISHED' &&
+      (!event.registrationStartAt || now >= event.registrationStartAt) &&
+      now < event.startAt
+    ) {
+      next = 'REGISTRATION_OPEN';
+    } else if (
+      event.status === 'REGISTRATION_OPEN' &&
+      event.registrationEndAt &&
+      now >= event.registrationEndAt &&
+      now < event.startAt
+    ) {
+      next = 'REGISTRATION_CLOSED';
+    }
+    if (!next) {
+      return event;
+    }
+    try {
+      await this.prisma.event.update({ where: { id: event.id }, data: { status: next } });
+      await this.prisma.eventAudit.create({
+        data: { eventId: event.id, action: `event.auto:${next}` },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `event.auto-advance-failed ${event.id} ${error instanceof Error ? error.message : String(error)}`,
+        'Events',
+      );
+      return event;
+    }
+    if (next === 'COMPLETED') {
+      void this.assignRanks(event.id).catch((error: unknown) =>
+        this.logger.warn(
+          `event.auto-ranks-failed ${event.id} ${error instanceof Error ? error.message : String(error)}`,
+          'Events',
+        ),
+      );
+    } else if (next === 'LIVE') {
+      void this.eventQueue
+        .notifyParticipants({
+          eventId: event.id,
+          type: 'EVENT_STARTED',
+          title: `Event is live: ${event.title}`,
+        })
+        .catch(() => undefined);
+    }
+    await this.invalidateEventCache(event.id);
+    return { ...event, status: next };
   }
 
   private async findParticipant(eventId: string, userId: string): Promise<ParticipantRow | null> {
@@ -1500,6 +1660,12 @@ export class EventsService {
     if (event.visibility === 'UNIVERSITY') {
       if (!event.organizationId) {
         throw new EventForbiddenError('This event is restricted.');
+      }
+      // Viewing only needs a signed-in user (so the join-organization and
+      // code boxes can render) — questions, answers and results stay gated
+      // behind membership below. Descriptions already leak via discovery.
+      if (action === 'view') {
+        return;
       }
       if (await this.eventBypass(event, caller)) {
         return;
@@ -1638,23 +1804,16 @@ export class EventsService {
     return caller.roles.includes('admin') || caller.permissions.includes('manage:platform');
   }
 
-  private async requireOrgAccess(organizationId: string, caller: Caller): Promise<void> {
-    if (this.isAdmin(caller)) {
-      return;
-    }
+  private async ensureOrgMembership(organizationId: string, caller: Caller): Promise<void> {
     const org = await this.prisma.organization.findUnique({ where: { id: organizationId } });
     if (!org) {
       throw new EventValidationError('Organization not found.');
     }
-    if (org.ownerId === caller.id) {
-      return;
-    }
-    const membership = await this.prisma.organizationMember.findUnique({
+    await this.prisma.organizationMember.upsert({
       where: { organizationId_userId: { organizationId, userId: caller.id } },
+      update: {},
+      create: { organizationId, userId: caller.id },
     });
-    if (!membership && !caller.permissions.includes('manage:events')) {
-      throw new EventForbiddenError('Only organization members may create events for it.');
-    }
   }
 
   private async assertProblemsUsable(problemIds: string[]): Promise<void> {

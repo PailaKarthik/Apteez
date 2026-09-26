@@ -82,7 +82,10 @@ function createPrisma(eventRow: Record<string, unknown>) {
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn(),
     },
-    organizationMember: { findUnique: jest.fn().mockResolvedValue(null) },
+    organizationMember: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      upsert: jest.fn().mockResolvedValue({}),
+    },
     organization: { findUnique: jest.fn().mockResolvedValue(null) },
     eventQuestion: { findMany: jest.fn().mockResolvedValue([]) },
     eventAnswer: {
@@ -218,6 +221,79 @@ describe('EventsService registration', () => {
       baseEvent({ visibility: 'UNIVERSITY', organizationId: 'o1' }),
     );
     await expect(service.register('e1', MEMBER)).rejects.toBeInstanceOf(EventForbiddenError);
+  });
+
+  it('auto-joins the creator to the organization on university event create', async () => {
+    const { service, prisma } = createService(baseEvent({}));
+    (prisma.organization.findUnique as jest.Mock).mockResolvedValue({ id: 'o1' });
+    const tx = (
+      prisma as unknown as {
+        _tx: { event: { create: jest.Mock } };
+      }
+    )._tx;
+    tx.event.create.mockResolvedValue({ id: 'e-new' });
+    await service.create(
+      {
+        title: 'University championship event',
+        description: 'A sufficiently long description for creation.',
+        eventType: 'CONTEST',
+        visibility: 'UNIVERSITY',
+        organizationId: 'o1',
+        difficulty: 'MEDIUM',
+        durationMinutes: 60,
+        startAt: new Date('2026-08-01T10:00:00.000Z'),
+        endAt: new Date('2026-08-01T12:00:00.000Z'),
+        isPaid: false,
+        problemIds: [],
+      } as never,
+      MEMBER,
+    );
+    expect(prisma.organizationMember.upsert as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { organizationId_userId: { organizationId: 'o1', userId: 'user1' } },
+      }),
+    );
+  });
+
+  it('lets signed-in non-members view university events (to join the org)', async () => {
+    const { service } = createService(
+      baseEvent({ visibility: 'UNIVERSITY', organizationId: 'o1' }),
+    );
+    const detail = await service.detail('e1', MEMBER);
+    expect(detail.organizationIsMember).toBe(false);
+    expect(detail.requiresCode).toBe(false);
+  });
+
+  it('auto-flips registration-open events live once started', async () => {
+    const now = new Date();
+    const { service, prisma } = createService(
+      baseEvent({
+        status: 'REGISTRATION_OPEN',
+        startAt: new Date(now.getTime() - 60_000),
+        endAt: new Date(now.getTime() + 3_600_000),
+      }),
+    );
+    const detail = await service.detail('e1', MEMBER);
+    expect(detail.status).toBe('LIVE');
+    expect(prisma.event.update as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'LIVE' }) }),
+    );
+  });
+
+  it('auto-completes overdue live events on read', async () => {
+    const now = new Date();
+    const { service, prisma } = createService(
+      baseEvent({
+        status: 'LIVE',
+        startAt: new Date(now.getTime() - 7_200_000),
+        endAt: new Date(now.getTime() - 3_600_000),
+      }),
+    );
+    const detail = await service.detail('e1', MEMBER);
+    expect(detail.status).toBe('COMPLETED');
+    expect(prisma.event.update as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'COMPLETED' }) }),
+    );
   });
 });
 
