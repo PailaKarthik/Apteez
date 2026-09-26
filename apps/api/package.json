@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
     "test": "jest --config jest.config.json",
-    "test:e2e": "jest --config test/jest-e2e.json --runInBand"
+    "test:e2e": "jest --config test/jest-e2e.json --runInBand",
+    "assets:backfill": "dotenv -e ../../.env -- tsx src/console/backfill-assets.ts"
   },
   "dependencies": {
     "@apteez/config": "workspace:*",
@@ -54,12 +55,15 @@
     "@types/cookie-parser": "^1.4.7",
     "@types/express": "^4.17.21",
     "@types/jest": "^29.5.0",
+    "@types/multer": "^2.2.0",
     "@types/node": "^20.16.0",
     "@types/supertest": "^6.0.0",
+    "dotenv-cli": "^7.3.0",
     "eslint": "^9.12.0",
     "jest": "^29.7.0",
     "supertest": "^7.0.0",
     "ts-jest": "^29.1.0",
+    "tsx": "^4.16.0",
     "typescript": "^5.6.3"
   }
 }

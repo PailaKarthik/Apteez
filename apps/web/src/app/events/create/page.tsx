@@ -23,8 +23,8 @@ export default function CreateEventPage(): React.JSX.Element {
 }
 
 /**
- * Any signed-in user can host: admins mint official events, everyone else
- * mints community ones (draft until an admin publishes).
+ * Any signed-in user can host: admin-hosted events are flagged official,
+ * everything else is a member-hosted event (draft until an admin publishes).
  */
 function CreateGate(): React.JSX.Element {
   const { user, isLoading: authLoading } = useAuth();
@@ -50,7 +50,7 @@ function CreateGate(): React.JSX.Element {
     <div className="space-y-4">
       {!access.allowed ? (
         <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-          You are hosting a community event — it stays a draft until an admin publishes it.
+          You are hosting a member event — it stays a draft until an admin publishes it.
         </p>
       ) : null}
       <EventCreateWizard />

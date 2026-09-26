@@ -85,6 +85,7 @@ export class ContributionService {
         contributorId: userId,
         title,
         statement: input.statement,
+        assets: (input.assets ?? []) as unknown as object,
         options: options as unknown as object,
         explanation: input.explanation,
         difficulty: input.difficulty,
@@ -226,6 +227,7 @@ export class ContributionService {
       data: {
         title,
         statement: input.statement,
+        assets: (input.assets ?? []) as unknown as object,
         options: options as unknown as object,
         explanation: input.explanation,
         difficulty: input.difficulty,
@@ -291,6 +293,7 @@ export class ContributionService {
         id: true,
         title: true,
         statement: true,
+        assets: true,
         options: true,
         explanation: true,
         difficulty: true,
@@ -313,11 +316,15 @@ export class ContributionService {
     const options = (
       row.options as unknown as Array<{ text?: string | null; assetKey?: string | null }>
     ).map((option) => ({ text: option.text ?? null, assetKey: option.assetKey ?? null }));
+    const stored = row.options as unknown as Array<{ isCorrect?: boolean }>;
+    const flagged = stored.findIndex((option) => option.isCorrect === true);
     return {
       id: row.id,
       title: row.title,
       statement: row.statement,
+      assets: Array.isArray(row.assets) ? (row.assets as ContributionDetailDto['assets']) : [],
       options,
+      correctAnswerIndex: flagged >= 0 ? flagged : null,
       explanation: row.explanation,
       difficulty: row.difficulty,
       categorySlug: row.category?.slug ?? null,

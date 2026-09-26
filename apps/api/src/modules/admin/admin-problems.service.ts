@@ -190,12 +190,16 @@ export class AdminProblemsService {
       examTagIds = tags.map((tag) => tag.id);
     }
     const difficulty = input.difficulty ?? difficultyForRating(input.rating);
+    // Content mode derives from what was attached: images alone, text alone,
+    // or both. The list badge (hasImage) reads this without joining assets.
+    const contentMode =
+      input.assets.length > 0 ? (input.statement ? 'TEXT_AND_IMAGE' : 'IMAGE_ONLY') : 'TEXT_ONLY';
     const now = new Date();
     const created = await this.prisma.problem.create({
       data: {
         title: input.title,
-        statement: input.statement,
-        contentMode: 'TEXT_ONLY',
+        statement: input.statement ?? null,
+        contentMode,
         difficulty,
         rating: input.rating,
         status: 'PUBLISHED',
@@ -208,10 +212,21 @@ export class AdminProblemsService {
         categoryId: category.id,
         topicId,
         subtopicId,
+        assets: {
+          create: input.assets.map((asset, index) => ({
+            kind: asset.kind,
+            objectKey: asset.key,
+            mimeType: asset.mimeType,
+            sizeBytes: asset.sizeBytes,
+            position: index,
+            altText: asset.altText ?? null,
+          })),
+        },
         options: {
           create: input.options.map((option, index) => ({
             position: index,
-            text: option.text,
+            text: option.text ?? null,
+            assetKey: option.assetKey ?? null,
             isCorrect: option.isCorrect ?? false,
           })),
         },

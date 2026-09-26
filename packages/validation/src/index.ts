@@ -120,6 +120,20 @@ export function normalizeQuestionRating(value: unknown, fallback = 1500): number
 }
 
 /**
+ * Object-storage keys only — never URLs. Keys come from POST
+ * /storage/uploads; download URLs are minted at read time, so persisting a
+ * URL would bake in an expiry (s3 presigned) or a wrong host (local dev).
+ */
+export const storageKeySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(512)
+  .refine((value) => !value.includes('://') && !value.startsWith('/') && !value.includes('..'), {
+    message: 'Provide the storage key returned by /storage/uploads, not a URL',
+  });
+
+/**
  * Canonical option-content rule shared by problems and contributions.
  * An option is valid when it carries text, an image key, or both — this is
  * the single place that rule is expressed.
@@ -127,7 +141,7 @@ export function normalizeQuestionRating(value: unknown, fallback = 1500): number
 export const answerOptionContentSchema = z
   .object({
     text: z.string().trim().min(1, 'Option text is required').max(500).optional(),
-    assetKey: z.string().trim().min(1).max(512).optional(),
+    assetKey: storageKeySchema.optional(),
   })
   .refine((value) => Boolean(value.text || value.assetKey), {
     message: 'An option needs text or an image',
@@ -275,8 +289,20 @@ export type FavoriteListQuery = z.infer<typeof favoriteListQuerySchema>;
  * Payload for a user-contributed aptitude question. Carries everything the
  * review flow needs to mint a canonical problem: the section (required),
  * topic (optional free text, matched to taxonomy), rating, exam folders and
- * source — so approval never has to invent missing fields.
+ * source — so approval never has to invent missing fields. Question images
+ * ride along as storage keys (from POST /storage/uploads) and become
+ * ProblemAsset rows on approval.
  */
+const contributionAssetSchema = z.object({
+  key: storageKeySchema,
+  kind: z.enum(['QUESTION_IMAGE', 'EXPLANATION_IMAGE']),
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']),
+  sizeBytes: z.number().int().min(1).max(5 * 1024 * 1024),
+  altText: z.string().trim().max(200).optional(),
+});
+
+export type ContributionAssetInput = z.infer<typeof contributionAssetSchema>;
+
 const contributionQuestionBase = z.object({
   type: z.enum(QUESTION_TYPES),
   difficulty: z.enum(QUESTION_DIFFICULTIES),
@@ -286,6 +312,7 @@ const contributionQuestionBase = z.object({
   examTagSlugs: z.array(z.string().trim().min(1).max(80)).max(8).default([]),
   source: z.string().trim().max(200).optional(),
   statement: z.string().trim().min(20).max(2000),
+  assets: z.array(contributionAssetSchema).max(4).default([]),
   options: z.array(answerOptionContentSchema).min(2).max(6),
   correctAnswerIndex: z.number().int().min(0),
   explanation: z.string().trim().min(20).max(4000),
@@ -1373,25 +1400,41 @@ export const adminProblemsQuerySchema = z.object({
 
 export type AdminProblemsQuery = z.infer<typeof adminProblemsQuerySchema>;
 
-const adminProblemOptionSchema = z.object({
-  text: z.string().trim().min(1, 'Option text is required').max(500),
-  isCorrect: z.boolean().optional(),
+const adminProblemOptionSchema = z
+  .object({
+    text: z.string().trim().min(1, 'Option text is required').max(500).optional(),
+    assetKey: storageKeySchema.optional(),
+    isCorrect: z.boolean().optional(),
+  })
+  .refine((value) => Boolean(value.text || value.assetKey), {
+    message: 'An option needs text or an image',
+  });
+
+const adminProblemAssetSchema = z.object({
+  key: storageKeySchema,
+  kind: z.enum(['QUESTION_IMAGE', 'EXPLANATION_IMAGE']),
+  /** Echoed from the POST /storage/uploads response — never typed by hand. */
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']),
+  sizeBytes: z.number().int().min(1).max(5 * 1024 * 1024),
+  altText: z.string().trim().max(200).optional(),
 });
 
 /**
  * Direct admin problem creation (Admin → Problems → New). Slug-based so the
- * form works with names, not UUIDs. Text-only V1: statement + text options
- * with exactly one correct answer. Rating is the source of truth for
- * difficulty — an explicit difficulty wins, otherwise it derives from the
- * band (1000–1200 EASY, 1300–1600 MEDIUM, 1700–2000 HARD); rating defaults
- * to 1500. Topic and subtopic are optional (a problem always needs its
- * section/category). Admin creation always goes live at once — there is no
- * draft detour on this path.
+ * form works with names, not UUIDs. Questions and options may carry images
+ * (keys from POST /storage/uploads): statement stays required unless at
+ * least one question image is attached; contentMode derives server-side.
+ * Rating is the source of truth for difficulty — an explicit difficulty
+ * wins, otherwise it derives from the band (1000–1200 EASY, 1300–1600
+ * MEDIUM, 1700–2000 HARD); rating defaults to 1500. Topic and subtopic are
+ * optional (a problem always needs its section/category). Admin creation
+ * always goes live at once — there is no draft detour on this path.
  */
 export const adminProblemCreateSchema = z
   .object({
     title: z.string().trim().min(3).max(200),
-    statement: z.string().trim().min(1).max(5000),
+    statement: z.string().trim().min(1).max(5000).optional(),
+    assets: z.array(adminProblemAssetSchema).max(4).default([]),
     explanation: z.string().trim().min(1).max(8000).optional(),
     shortcut: z.string().trim().min(1).max(4000).optional(),
     difficulty: difficultySchema.optional(),
@@ -1414,6 +1457,14 @@ export const adminProblemCreateSchema = z
         code: z.ZodIssueCode.custom,
         path: ['options'],
         message: 'Exactly one option must be marked correct',
+      });
+    }
+    const hasQuestionImage = value.assets.some((asset) => asset.kind === 'QUESTION_IMAGE');
+    if (!value.statement && !hasQuestionImage) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['statement'],
+        message: 'Write the question text or attach a question image',
       });
     }
     if (value.subtopicSlug && !value.topicSlug) {

@@ -23,23 +23,27 @@ import {
 import { ApiError } from '@/lib/api-client';
 import { useCreateAdminProblem } from '@/hooks/use-admin';
 import { useCategories, useCategoryTopics, useExamTags } from '@/hooks/use-problems';
+import type { UploadedImage } from '@/hooks/use-upload-image';
+import { ImagePicker } from '@/components/problems/image-picker';
 
 interface DraftOption {
   text: string;
+  image: UploadedImage | null;
   isCorrect: boolean;
 }
 
 export const NO_TOPIC = '__none';
 
 const emptyOptions = (): DraftOption[] => [
-  { text: '', isCorrect: true },
-  { text: '', isCorrect: false },
+  { text: '', image: null, isCorrect: true },
+  { text: '', image: null, isCorrect: false },
 ];
 
 /** Pure body builder (unit-tested): optionality + rating rounding in one place. */
 export function buildProblemBody(args: {
   title: string;
   statement: string;
+  questionImage: UploadedImage | null;
   explanation: string;
   difficulty: '' | QuestionDifficulty;
   rating: string;
@@ -58,9 +62,24 @@ export function buildProblemBody(args: {
         .filter(Boolean),
     ),
   ];
+  const statement = args.statement.trim();
   return {
     title: args.title.trim(),
-    statement: args.statement.trim(),
+    // Image-only questions omit the statement; the server requires text or
+    // a question image, never both-neither.
+    ...(statement ? { statement } : {}),
+    ...(args.questionImage
+      ? {
+          assets: [
+            {
+              key: args.questionImage.key,
+              kind: 'QUESTION_IMAGE',
+              mimeType: args.questionImage.contentType,
+              sizeBytes: args.questionImage.size,
+            },
+          ],
+        }
+      : {}),
     ...(args.explanation.trim() ? { explanation: args.explanation.trim() } : {}),
     ...(args.difficulty ? { difficulty: args.difficulty } : {}),
     rating: ratingValue,
@@ -71,8 +90,12 @@ export function buildProblemBody(args: {
       : {}),
     examTagSlugs,
     options: args.options
-      .map((option) => ({ text: option.text.trim(), isCorrect: option.isCorrect }))
-      .filter((option) => option.text.length > 0),
+      .map((option) => ({
+        ...(option.text.trim() ? { text: option.text.trim() } : {}),
+        ...(option.image ? { assetKey: option.image.key } : {}),
+        isCorrect: option.isCorrect,
+      }))
+      .filter((option) => option.text ?? option.assetKey),
   };
 }
 
@@ -105,6 +128,7 @@ export function NewProblemDialog({
 
   const [title, setTitle] = React.useState('');
   const [statement, setStatement] = React.useState('');
+  const [questionImage, setQuestionImage] = React.useState<UploadedImage | null>(null);
   const [explanation, setExplanation] = React.useState('');
   const [topicSlug, setTopicSlug] = React.useState(NO_TOPIC);
   const [subtopicSlug, setSubtopicSlug] = React.useState(NO_TOPIC);
@@ -117,6 +141,7 @@ export function NewProblemDialog({
   const reset = (): void => {
     setTitle('');
     setStatement('');
+    setQuestionImage(null);
     setExplanation('');
     setCategorySlug('');
     setTopicSlug(NO_TOPIC);
@@ -143,12 +168,14 @@ export function NewProblemDialog({
     if (!categorySlug) {
       errors.categorySlug = 'Pick the section this problem belongs to.';
     }
-    if (statement.trim().length === 0) {
-      errors.statement = 'Write the question statement.';
+    if (statement.trim().length === 0 && !questionImage) {
+      errors.statement = 'Write the question text or attach a question image.';
     }
-    const filled = options.filter((option) => option.text.trim().length > 0);
+    const filled = options.filter(
+      (option) => option.text.trim().length > 0 || option.image,
+    );
     if (filled.length < 2) {
-      errors.options = 'Fill in at least two answer options.';
+      errors.options = 'Fill in at least two answer options (text or image each).';
     }
     const ratingValue = Number(rating);
     if (!Number.isFinite(ratingValue) || ratingValue < 1000 || ratingValue > 2000) {
@@ -193,6 +220,7 @@ export function NewProblemDialog({
       buildProblemBody({
         title,
         statement,
+        questionImage,
         explanation,
         difficulty,
         rating,
@@ -234,6 +262,11 @@ export function NewProblemDialog({
   const setOptionText = (index: number, text: string): void => {
     setOptions((current) =>
       current.map((option, i) => (i === index ? { ...option, text } : option)),
+    );
+  };
+  const setOptionImage = (index: number, image: UploadedImage | null): void => {
+    setOptions((current) =>
+      current.map((option, i) => (i === index ? { ...option, image } : option)),
     );
   };
   const markCorrect = (index: number): void => {
@@ -401,7 +434,7 @@ export function NewProblemDialog({
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="new-problem-statement">Statement</Label>
+            <Label htmlFor="new-problem-statement">Statement (or a question image)</Label>
             <textarea
               id="new-problem-statement"
               value={statement}
@@ -409,6 +442,11 @@ export function NewProblemDialog({
               rows={4}
               placeholder="A does a work in 10 days…"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+            <ImagePicker
+              label="Question image (optional)"
+              value={questionImage}
+              onChange={setQuestionImage}
             />
             {fieldErrors.statement ? <FieldError message={fieldErrors.statement} /> : null}
           </div>
@@ -421,7 +459,7 @@ export function NewProblemDialog({
                   variant="ghost"
                   size="sm"
                   onClick={() =>
-                    setOptions((current) => [...current, { text: '', isCorrect: false }])
+                    setOptions((current) => [...current, { text: '', image: null, isCorrect: false }])
                   }
                 >
                   Add option
@@ -429,21 +467,29 @@ export function NewProblemDialog({
               ) : null}
             </div>
             {options.map((option, index) => (
-              <div key={index} className="flex items-center gap-2">
+              <div key={index} className="flex items-start gap-2">
                 <input
                   type="radio"
                   name="new-problem-correct"
                   checked={option.isCorrect}
                   onChange={() => markCorrect(index)}
                   aria-label={`Mark option ${index + 1} correct`}
-                  className="size-4 shrink-0 accent-primary"
+                  className="mt-2 size-4 shrink-0 accent-primary"
                 />
-                <Input
-                  value={option.text}
-                  onChange={(event) => setOptionText(index, event.target.value)}
-                  placeholder={`Option ${index + 1}`}
-                  aria-label={`Option ${index + 1} text`}
-                />
+                <div className="flex-1 space-y-1">
+                  <Input
+                    value={option.text}
+                    onChange={(event) => setOptionText(index, event.target.value)}
+                    placeholder={`Option ${index + 1} text`}
+                    aria-label={`Option ${index + 1} text`}
+                  />
+                  <ImagePicker
+                    label={`Option ${index + 1} image (optional)`}
+                    value={option.image}
+                    onChange={(image) => setOptionImage(index, image)}
+                    compact
+                  />
+                </div>
                 {options.length > 2 ? (
                   <Button
                     type="button"

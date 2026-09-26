@@ -50,6 +50,7 @@ const INPUT: ContributionQuestionInput = {
   categorySlug: 'quantitative',
   topic: 'Arithmetic',
   examTagSlugs: [],
+  assets: [],
   statement: 'What is 2 + 2? A simple arithmetic question for testing purposes.',
   options: [{ text: '3' }, { text: '4' }, { text: '5' }],
   correctAnswerIndex: 1,

@@ -24,6 +24,7 @@ import {
   usePublishEvent,
 } from '@/hooks/use-events';
 import { useProblemsFeed } from '@/hooks/use-problems';
+import { NewProblemDialog, type CreatedProblem } from '@/components/admin/new-problem-dialog';
 
 const STEPS = ['Basic', 'Type', 'Visibility', 'Questions', 'Rules', 'Schedule', 'Review'] as const;
 
@@ -55,6 +56,20 @@ export function EventCreateWizard(): React.JSX.Element {
   const [entryCode, setEntryCode] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const [creatingProblem, setCreatingProblem] = useState(false);
+  const [freshProblems, setFreshProblems] = useState<CreatedProblem[]>([]);
+
+  /** Fresh problem for this event: created published, auto-selected below. */
+  const createAndSelect = (created: CreatedProblem | undefined): void => {
+    if (!created) {
+      return;
+    }
+    setFreshProblems((prev) =>
+      prev.some((p) => p.id === created.id) ? prev : [created, ...prev],
+    );
+    setSelected((prev) => (prev.includes(created.id) ? prev : [...prev, created.id]));
+    toast.success(`"${created.title}" created and selected.`);
+  };
 
   const create = useCreateEvent();
   const publish = usePublishEvent(createdId ?? undefined);
@@ -262,7 +277,7 @@ export function EventCreateWizard(): React.JSX.Element {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {['PUBLIC', 'PRIVATE', 'UNIVERSITY', 'COMMUNITY'].map((t) => (
+                  {['PUBLIC', 'PRIVATE', 'UNIVERSITY'].map((t) => (
                     <SelectItem key={t} value={t}>
                       {t}
                     </SelectItem>
@@ -354,11 +369,34 @@ export function EventCreateWizard(): React.JSX.Element {
         ) : null}
         {step === 3 ? (
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Select from approved published questions only — events never duplicate content (
-              {selected.length} selected).
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-muted-foreground">
+                Select from approved published questions only — events never duplicate content (
+                {selected.length} selected).
+              </p>
+              <Button type="button" variant="outline" onClick={() => setCreatingProblem(true)}>
+                New problem
+              </Button>
+            </div>
+            <NewProblemDialog
+              open={creatingProblem}
+              onOpenChange={setCreatingProblem}
+              onCreated={createAndSelect}
+            />
             <ul className="max-h-80 space-y-2 overflow-y-auto">
+              {freshProblems.map((p) => (
+                <li key={p.id}>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(p.id)}
+                      onChange={() => toggleProblem(p.id)}
+                    />
+                    <span className="flex-1">{p.title}</span>
+                    <span className="text-muted-foreground">New</span>
+                  </label>
+                </li>
+              ))}
               {problemItems.map((p) => (
                 <li key={p.id}>
                   <label className="flex cursor-pointer items-center gap-2 rounded-lg border p-3 text-sm">

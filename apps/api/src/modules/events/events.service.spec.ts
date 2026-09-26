@@ -298,7 +298,7 @@ describe('EventsService registration', () => {
 });
 
 describe('EventsService authorization', () => {
-  it('marks member-created events community and admin-created events official', async () => {
+  it('marks member-created events unofficial and admin-created events official', async () => {
     const { service, prisma } = createService(baseEvent({}));
     const tx = (
       prisma as unknown as {
@@ -330,7 +330,7 @@ describe('EventsService authorization', () => {
     );
   });
 
-  it('filters official vs community origins', async () => {
+  it('filters official vs member-hosted origins', async () => {
     const { service, prisma } = createService(baseEvent({}));
     await service.list({ phase: 'active', origin: 'official', page: 1, pageSize: 20 }, MEMBER);
     expect(prisma.event.findMany as jest.Mock).toHaveBeenCalledWith(

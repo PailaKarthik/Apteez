@@ -163,6 +163,7 @@ describe('AdminProblemsService create', () => {
       { text: '6 days', isCorrect: false },
     ],
     examTagSlugs: [] as string[],
+    assets: [],
     publish: false,
   };
 
@@ -197,15 +198,65 @@ describe('AdminProblemsService create', () => {
           topicId: 't1',
           options: {
             create: [
-              { position: 0, text: '5 days', isCorrect: true },
-              { position: 1, text: '6 days', isCorrect: false },
+              { position: 0, text: '5 days', assetKey: null, isCorrect: true },
+              { position: 1, text: '6 days', assetKey: null, isCorrect: false },
             ],
           },
+          assets: { create: [] },
+          contentMode: 'TEXT_ONLY',
         }),
       }),
     );
     expect(deps.audit.log).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'problem.create', targetId: 'p9' }),
+    );
+  });
+
+  it('persists question images and image options with derived TEXT_AND_IMAGE mode', async () => {
+    const { service, prisma } = setupCreate();
+    await service.create(
+      {
+        ...valid,
+        statement: 'Study the figure and pick the next shape.',
+        assets: [
+          {
+            key: 'questions/q1/diagram.png',
+            kind: 'QUESTION_IMAGE',
+            mimeType: 'image/png',
+            sizeBytes: 1024,
+          },
+        ],
+        options: [
+          { text: 'Pentagon', isCorrect: true },
+          { assetKey: 'questions/q1/opt-b.png', isCorrect: false },
+        ],
+      },
+      CALLER,
+    );
+    expect(prisma.problem.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          contentMode: 'TEXT_AND_IMAGE',
+          assets: {
+            create: [
+              {
+                kind: 'QUESTION_IMAGE',
+                objectKey: 'questions/q1/diagram.png',
+                mimeType: 'image/png',
+                sizeBytes: 1024,
+                position: 0,
+                altText: null,
+              },
+            ],
+          },
+          options: {
+            create: [
+              { position: 0, text: 'Pentagon', assetKey: null, isCorrect: true },
+              { position: 1, text: null, assetKey: 'questions/q1/opt-b.png', isCorrect: false },
+            ],
+          },
+        }),
+      }),
     );
   });
 

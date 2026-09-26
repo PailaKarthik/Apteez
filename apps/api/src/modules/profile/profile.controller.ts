@@ -9,6 +9,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import {
   activityRangeSchema,
   profileUpdateSchema,
@@ -63,6 +64,9 @@ export class ProfileController {
   @Post('me/avatar')
   @UseInterceptors(
     FileInterceptor('avatar', {
+      // Memory storage: the service reads file.buffer (multer's disk
+      // default leaves buffer undefined, which broke uploads).
+      storage: memoryStorage(),
       limits: { fileSize: 5 * 1024 * 1024, files: 1 },
       fileFilter: (
         _req,

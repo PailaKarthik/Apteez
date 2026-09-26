@@ -133,7 +133,7 @@ describe('SearchService visibility', () => {
     const { service, prisma } = createService();
     await service.searchEvents('workshop', undefined, 5, 0, null);
     const where = (prisma.event.findMany as jest.Mock).mock.calls[0][0].where;
-    expect(where.AND[0]).toEqual({ visibility: { in: ['PUBLIC', 'COMMUNITY'] } });
+    expect(where.AND[0]).toEqual({ visibility: 'PUBLIC' });
     expect(JSON.stringify(where)).not.toContain('PRIVATE');
   });
 

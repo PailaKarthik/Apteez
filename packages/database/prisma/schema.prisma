@@ -180,11 +180,12 @@ enum EventStatus {
   ARCHIVED
 }
 
+// Visibility is exactly PUBLIC, PRIVATE or UNIVERSITY — there is no
+// community tier: member-hosted events are PUBLIC with an organizer.
 enum EventVisibility {
   PUBLIC
   PRIVATE
   UNIVERSITY
-  COMMUNITY
 }
 
 enum EventType {
@@ -638,6 +639,10 @@ model Contribution {
   category           Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   rating             Int?
   examTags           Json?
+  // Question-level images as storage keys (from POST /storage/uploads),
+  // frozen at submit time. Become ProblemAsset rows on approval. Nullable
+  // so older rows without them keep working.
+  assets             Json?
   source             String?
   topicId            String?            @db.Uuid
   topic              Topic?             @relation(fields: [topicId], references: [id], onDelete: SetNull)

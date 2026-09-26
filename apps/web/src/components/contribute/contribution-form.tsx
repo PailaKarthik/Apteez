@@ -28,6 +28,8 @@ import { ApiError } from '@/lib/api-client';
 import { authErrorMessage } from '@/hooks/use-auth';
 import { useResubmitContribution, useSubmitContribution } from '@/hooks/use-contributions';
 import { useCategories } from '@/hooks/use-problems';
+import type { UploadedImage } from '@/hooks/use-upload-image';
+import { ImagePicker } from '@/components/problems/image-picker';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@apteez/ui';
 
 const DRAFTS_KEY = 'apteez:contribution-drafts';
@@ -125,11 +127,44 @@ const EMPTY_VALUES: ContributionQuestionInput = {
   topic: '',
   examTagSlugs: [],
   statement: '',
+  assets: [],
   options: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }],
   correctAnswerIndex: 0,
   explanation: '',
   sourceUrl: '',
 };
+
+interface StoredImageRef {
+  key: string;
+  kind: 'QUESTION_IMAGE' | 'EXPLANATION_IMAGE';
+  mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' | 'image/avif';
+  sizeBytes: number;
+  altText?: string;
+}
+
+function toAssetPayload(image: UploadedImage): StoredImageRef {
+  if (!isSupportedImageMime(image.contentType)) {
+    throw new Error('Unsupported image type.');
+  }
+  return {
+    key: image.key,
+    kind: 'QUESTION_IMAGE',
+    mimeType: image.contentType,
+    sizeBytes: image.size,
+  };
+}
+
+function isSupportedImageMime(
+  mime: string,
+): mime is StoredImageRef['mimeType'] {
+  return (
+    mime === 'image/jpeg' ||
+    mime === 'image/png' ||
+    mime === 'image/webp' ||
+    mime === 'image/gif' ||
+    mime === 'image/avif'
+  );
+}
 
 /**
  * Contribution composer. "Submit for review" POSTs to the review queue
@@ -164,6 +199,8 @@ export function ContributionForm({
   React.useEffect(() => {
     if (initial) {
       form.reset(initial);
+      setKeptAssets(initial.assets ?? []);
+      resetImages();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialKey]);
@@ -171,15 +208,45 @@ export function ContributionForm({
   const { fields } = useFieldArray({ control: form.control, name: 'options' });
   const busy = submit.isPending || resubmit.isPending;
 
+  // Images live outside react-hook-form (file uploads, not text inputs) and
+  // merge into the payload at submit time. `keptAssets` preserves images
+  // already on the submission when revising — revise never drops them.
+  const [questionImages, setQuestionImages] = React.useState<UploadedImage[]>([]);
+  const [optionImages, setOptionImages] = React.useState<Array<UploadedImage | null>>([]);
+  const [keptAssets, setKeptAssets] = React.useState<StoredImageRef[]>(() => initial?.assets ?? []);
+
+  const resetImages = React.useCallback(() => {
+    setQuestionImages([]);
+    setOptionImages([]);
+  }, []);
+
+  const withImages = (values: ContributionQuestionInput): ContributionQuestionInput => ({
+    ...values,
+    assets: [
+      ...keptAssets,
+      ...questionImages
+        .filter((image) => isSupportedImageMime(image.contentType))
+        .map(toAssetPayload),
+    ],
+    options: values.options.map((option, index) => {
+      const image = optionImages[index];
+      return image && isSupportedImageMime(image.contentType)
+        ? { ...option, assetKey: image.key }
+        : option;
+    }),
+  });
+
   const submitForReview = (values: ContributionQuestionInput): void => {
+    const payload = withImages(values);
     if (onSubmitOverride) {
       void (async () => {
         try {
-          await onSubmitOverride(values);
+          await onSubmitOverride(payload);
           toast.success('Modifications saved', {
             description: 'The submission stays in the review queue.',
           });
           form.reset();
+          resetImages();
           onRevised?.();
           onSaved();
         } catch (error) {
@@ -189,7 +256,7 @@ export function ContributionForm({
       return;
     }
     const mutation = reviseId ? resubmit : submit;
-    mutation.mutate(values, {
+    mutation.mutate(payload, {
       onSuccess: () => {
         toast.success(reviseId ? 'Revision saved' : 'Submitted for review', {
           description: reviseId
@@ -197,6 +264,7 @@ export function ContributionForm({
             : 'A reviewer has been notified. Track it under My submissions.',
         });
         form.reset();
+        resetImages();
         if (reviseId) {
           onRevised?.();
         } else {
@@ -214,7 +282,7 @@ export function ContributionForm({
   };
 
   const saveDraft = (): void => {
-    const values = form.getValues();
+    const values = withImages(form.getValues());
     const draft: ContributionDraft = {
       ...values,
       id: `draft-${Date.now()}`,
@@ -393,6 +461,40 @@ export function ContributionForm({
               )}
             />
 
+            <div className="space-y-2">
+              <p className="text-sm font-medium">
+                Question images{' '}
+                <span className="font-normal text-muted-foreground">(optional, up to 4)</span>
+              </p>
+              {keptAssets.length > 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {keptAssets.length} attached image{keptAssets.length === 1 ? '' : 's'} kept from
+                  the current submission.
+                </p>
+              ) : null}
+              {questionImages.map((image, index) => (
+                <ImagePicker
+                  key={image.key}
+                  label={`Image ${keptAssets.length + index + 1}`}
+                  value={image}
+                  onChange={(next) =>
+                    setQuestionImages((current) =>
+                      next ? current.map((entry) => (entry.key === image.key ? next : entry)) : current.filter((entry) => entry.key !== image.key),
+                    )
+                  }
+                />
+              ))}
+              {keptAssets.length + questionImages.length < 4 ? (
+                <ImagePicker
+                  label={questionImages.length === 0 ? 'Attach an image' : 'Attach another image'}
+                  value={null}
+                  onChange={(next) =>
+                    setQuestionImages((current) => (next ? [...current, next] : current))
+                  }
+                />
+              ) : null}
+            </div>
+
             <div className="space-y-3">
               <p className="text-sm font-medium">Answer options</p>
               {fields.map((option, index) => (
@@ -418,6 +520,18 @@ export function ContributionForm({
                           Correct
                         </label>
                       </div>
+                      <ImagePicker
+                        label={`Option ${index + 1} image (optional)`}
+                        value={optionImages[index] ?? null}
+                        onChange={(next) =>
+                          setOptionImages((current) => {
+                            const nextImages = [...current];
+                            nextImages[index] = next;
+                            return nextImages;
+                          })
+                        }
+                        compact
+                      />
                       <FormMessage />
                     </FormItem>
                   )}

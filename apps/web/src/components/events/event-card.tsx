@@ -74,9 +74,7 @@ export function EventCard({ event, className }: EventCardProps): React.JSX.Eleme
             <CardDescription className="line-clamp-2">{event.description}</CardDescription>
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={event.isOfficial ? 'default' : 'secondary'}>
-              {event.isOfficial ? 'Official' : 'Community'}
-            </Badge>
+            {event.isOfficial ? <Badge variant="default">Official</Badge> : null}
             <Badge variant="outline">{event.eventType}</Badge>
             <Badge variant="outline">{event.visibility}</Badge>
             {event.isPaid ? (

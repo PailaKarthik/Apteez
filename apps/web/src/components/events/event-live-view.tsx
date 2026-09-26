@@ -13,6 +13,7 @@ import {
   LoadingState,
 } from '@apteez/ui';
 import { QuestionRenderer } from '@/components/problems/question-renderer';
+import { OptionRenderer } from '@/components/problems/option-renderer';
 import { ApiError } from '@/lib/api-client';
 import {
   useAnswerEvent,
@@ -125,14 +126,16 @@ export function EventLiveView({ eventId }: { eventId: string }): React.JSX.Eleme
                 <QuestionRenderer statement={current.statement} assets={current.assets} />
                 <div className="space-y-2">
                   {options.map((opt) => (
-                    <button
+                    <OptionRenderer
                       key={opt.id}
+                      option={opt}
+                      selected={current.selectedOptionId === opt.id}
                       disabled={!current.answerable || answer.isPending}
-                      onClick={() =>
+                      onSelect={(optionId) =>
                         answer.mutate(
                           {
                             questionId: current.questionId,
-                            selectedOptionId: opt.id,
+                            selectedOptionId: optionId,
                             currentPosition: session.currentPosition,
                           },
                           {
@@ -142,10 +145,7 @@ export function EventLiveView({ eventId }: { eventId: string }): React.JSX.Eleme
                           },
                         )
                       }
-                      className={`w-full rounded-lg border p-3 text-left text-sm transition-colors hover:border-primary/50 ${current.selectedOptionId === opt.id ? 'border-primary bg-primary/5' : ''}`}
-                    >
-                      {opt.text ?? '(image option)'}
-                    </button>
+                    />
                   ))}
                 </div>
                 <div className="flex gap-2">

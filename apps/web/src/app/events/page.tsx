@@ -34,7 +34,6 @@ const PHASES = [
 
 export default function EventsPage(): React.JSX.Element {
   const [phase, setPhase] = useState<string>('all');
-  const [origin, setOrigin] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [eventType, setEventType] = useState<string>('all');
   const [difficulty, setDifficulty] = useState<string>('all');
@@ -44,17 +43,16 @@ export default function EventsPage(): React.JSX.Element {
     () => ({
       // "All" omits the phase entirely (public discovery set).
       ...(phase === 'all' ? {} : { phase: phase as 'upcoming' | 'live' | 'past' | 'mine' }),
-      ...(origin !== 'all' ? { origin: origin as 'official' | 'community' } : {}),
       ...(debounced ? { q: debounced } : {}),
       ...(eventType !== 'all' ? { eventType: eventType as 'CONTEST' } : {}),
       ...(difficulty !== 'all' ? { difficulty: difficulty as 'EASY' } : {}),
       page: 1,
       pageSize: 20,
     }),
-    [phase, origin, debounced, eventType, difficulty],
+    [phase, debounced, eventType, difficulty],
   );
   const { data, isLoading, isError, error, refetch } = useEvents(query);
-  // Anyone signed in can create a community event; admins mint official ones.
+  // Anyone signed in can host an event; admins mint official ones.
   const createAccess = useAdminAccess(['manage:events']);
 
   const onSearch = (value: string): void => {
@@ -73,7 +71,7 @@ export default function EventsPage(): React.JSX.Element {
         description="Discover aptitude events, register, and compete — powered by the canonical question library."
         actions={
           <Link href="/events/create">
-            <Button>{createAccess.allowed ? 'Create event' : 'Host community event'}</Button>
+            <Button>{createAccess.allowed ? 'Create event' : 'Host an event'}</Button>
           </Link>
         }
       />
@@ -95,16 +93,6 @@ export default function EventsPage(): React.JSX.Element {
           className="sm:max-w-sm"
         />
         <div className="flex gap-2">
-          <Select value={origin} onValueChange={setOrigin}>
-            <SelectTrigger className="w-36" aria-label="Origin filter">
-              <SelectValue placeholder="Origin" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All events</SelectItem>
-              <SelectItem value="official">Official</SelectItem>
-              <SelectItem value="community">Community</SelectItem>
-            </SelectContent>
-          </Select>
           <Select value={eventType} onValueChange={setEventType}>
             <SelectTrigger className="w-36">
               <SelectValue placeholder="Type" />

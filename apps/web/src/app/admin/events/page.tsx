@@ -91,7 +91,7 @@ export default function AdminEventsPage(): React.JSX.Element {
         </Button>
       </form>
       <p className="text-xs text-muted-foreground">
-        Community drafts land here for review — publish the good ones, cancel the rest.
+        Member-hosted drafts land here for review — publish the good ones, cancel the rest.
       </p>
 
       {data.items.length === 0 ? (
@@ -119,9 +119,7 @@ export default function AdminEventsPage(): React.JSX.Element {
                     </span>
                   </td>
                   <td className="px-3 py-2">
-                    <Badge variant={row.isOfficial ? 'default' : 'secondary'}>
-                      {row.isOfficial ? 'Official' : 'Community'}
-                    </Badge>
+                    {row.isOfficial ? <Badge variant="default">Official</Badge> : null}
                   </td>
                   <td className="px-3 py-2">
                     <Badge

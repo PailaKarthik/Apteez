@@ -23,6 +23,7 @@ import { ProfileName } from '@/components/profile/profile-link';
 import {
   useEvent,
   useEventLeaderboard,
+  useEventResult,
   useJoinEvent,
   useJoinOrganization,
   useRegisterEvent,
@@ -38,9 +39,18 @@ export default function EventDetailPage(): React.JSX.Element {
   const id = params?.id;
   const router = useRouter();
   const { data: event, isLoading, isError, error, refetch } = useEvent(id);
-  const { data: leaderboard } = useEventLeaderboard(
-    event?.status === 'COMPLETED' || event?.phase === 'past' ? id : undefined,
+  const showResults = event?.status === 'COMPLETED' || event?.phase === 'past';
+  const { data: leaderboard } = useEventLeaderboard(showResults ? id : undefined, {
+    page: 1,
+    pageSize: 10,
+  });
+  // Own result as soon as this participant submitted — even while the event
+  // is still live for others (contest-style: submit → see your score).
+  const submitted = Boolean(
+    event?.participant &&
+      (event.participant.status === 'SUBMITTED' || event.participant.status === 'AUTO_SUBMITTED'),
   );
+  const { data: ownResult } = useEventResult(submitted ? event?.id : undefined);
   const register = useRegisterEvent(event?.id);
   const withdraw = useWithdrawEvent(event?.id);
   const join = useJoinEvent(event?.id);
@@ -121,9 +131,7 @@ export default function EventDetailPage(): React.JSX.Element {
                 >
                   {event.status.replace(/_/g, ' ')}
                 </Badge>
-                <Badge variant={event.isOfficial ? 'default' : 'secondary'}>
-                  {event.isOfficial ? 'Official' : 'Community'}
-                </Badge>
+                {event.isOfficial ? <Badge variant="default">Official</Badge> : null}
                 <Badge variant="outline">{event.eventType}</Badge>
                 <Badge variant="outline">{event.visibility}</Badge>
                 <Badge variant="outline">{event.difficulty}</Badge>
@@ -172,31 +180,70 @@ export default function EventDetailPage(): React.JSX.Element {
               </div>
             </CardContent>
           </Card>
+          {ownResult ? (
+            <Card>
+              <CardContent className="space-y-2 p-6">
+                <CardTitle className="text-card-title">Your result</CardTitle>
+                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
+                  <span>
+                    Score <span className="font-metric text-lg">{ownResult.score}</span>
+                  </span>
+                  <span className="text-muted-foreground">
+                    Correct <span className="font-metric">{ownResult.correctCount}</span> · Wrong{' '}
+                    <span className="font-metric">{ownResult.wrongCount}</span> · Unanswered{' '}
+                    <span className="font-metric">{ownResult.unansweredCount}</span>
+                  </span>
+                  <span className="text-muted-foreground">
+                    Time <span className="font-metric">{ownResult.completionSeconds}s</span>
+                  </span>
+                  {ownResult.rank !== null ? (
+                    <span>
+                      Rank <span className="font-metric">#{ownResult.rank}</span> of{' '}
+                      <span className="font-metric">{ownResult.totalParticipants}</span>
+                    </span>
+                  ) : null}
+                  {ownResult.autoSubmitted ? (
+                    <Badge variant="outline">Auto-submitted</Badge>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
           {leaderboard && leaderboard.items.length > 0 ? (
             <Card>
               <CardContent className="space-y-3 p-6">
-                <CardTitle className="text-card-title">Top results</CardTitle>
+                <div className="flex items-baseline justify-between">
+                  <CardTitle className="text-card-title">Results</CardTitle>
+                  <span className="text-xs text-muted-foreground">
+                    <span className="font-metric">{leaderboard.meta.total}</span> participants
+                  </span>
+                </div>
                 <ol className="space-y-2">
-                  {leaderboard.items.slice(0, 10).map((row) => (
+                  {leaderboard.items.map((row) => (
                     <li
                       key={row.userId}
-                      className="flex items-center justify-between gap-2 text-sm"
+                      className={`flex items-center justify-between gap-2 rounded-lg border p-3 text-sm ${row.isCurrentUser ? 'border-primary/50 bg-primary/5' : 'border-border'}`}
                     >
-                      <span>
+                      <span className="min-w-0">
                         <span className="font-metric">#{row.rank}</span>{' '}
                         <ProfileName username={row.username} displayName={row.displayName} />
+                        {row.institution ? (
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {row.institution}
+                          </span>
+                        ) : null}
                       </span>
-                      <span className="font-metric">
-                        {row.score} pts · {row.completionSeconds}s
+                      <span className="shrink-0 text-right">
+                        <span className="font-metric">{row.score} pts</span>
+                        <span className="block text-xs text-muted-foreground">
+                          <span className="font-metric">{row.correctCount}</span>C ·{' '}
+                          <span className="font-metric">{row.wrongCount}</span>W ·{' '}
+                          <span className="font-metric">{row.completionSeconds}s</span>
+                        </span>
                       </span>
                     </li>
                   ))}
                 </ol>
-                <Link href={`/events/${event.slug}/live?results=1`}>
-                  <Button variant="ghost" size="sm">
-                    Full leaderboard
-                  </Button>
-                </Link>
               </CardContent>
             </Card>
           ) : null}

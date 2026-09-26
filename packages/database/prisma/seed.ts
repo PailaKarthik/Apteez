@@ -1,6 +1,7 @@
 import { randomBytes, scryptSync } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { generatePlaceholderPng } from '../../../apps/api/src/storage/placeholder-image';
 import { Prisma, PrismaClient } from '../generated/client';
 
 /**
@@ -141,29 +142,15 @@ interface SeedProblem {
   options: SeedOption[];
 }
 
-const SEED_IMAGE_KEY = 'seed/problems/diagram-placeholder.svg';
-
-const SEED_IMAGE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 240" role="img" aria-label="Rotating polygon sequence">
-  <rect width="480" height="240" fill="#f8fafc"/>
-  <g fill="none" stroke="#4f46e5" stroke-width="3">
-    <polygon points="60,120 90,68 120,120 90,172"/>
-    <polygon points="180,120 210,60 240,90 210,180 180,150"/>
-    <polygon points="300,120 330,55 360,80 360,160 330,185"/>
-    <polygon points="420,120 450,50 480,120 450,190"/>
-  </g>
-  <g fill="#1e1b4b" font-family="Arial, sans-serif" font-size="16" text-anchor="middle">
-    <text x="90" y="215">A</text>
-    <text x="210" y="215">B</text>
-    <text x="330" y="215">C</text>
-    <text x="450" y="215">D</text>
-  </g>
-</svg>
-`;
+const SEED_IMAGE_KEY = 'seed/problems/diagram-placeholder.png';
 
 /**
  * Writes the demo question image into the local storage provider's root so
- * the image-backed seed problems render end to end. Remote providers (s3)
- * manage assets themselves, so this is a local-development convenience.
+ * the image-backed seed problems render end to end. PNG bytes (generated, no
+ * static fixtures) because the asset route serves SVG as a download, not an
+ * image. Remote providers (s3) manage assets themselves — run
+ * `assets:backfill` after seeding against those; this is a
+ * local-development convenience.
  */
 function seedLocalAssets(): void {
   if ((process.env.STORAGE_PROVIDER ?? 'local') !== 'local') {
@@ -174,7 +161,7 @@ function seedLocalAssets(): void {
   const apiDir = resolve(__dirname, '../../../apps/api');
   const target = resolve(apiDir, configuredDir, SEED_IMAGE_KEY);
   mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, SEED_IMAGE_SVG, 'utf8');
+  writeFileSync(target, generatePlaceholderPng());
 }
 
 const PROBLEMS: SeedProblem[] = [
@@ -373,7 +360,7 @@ const PROBLEMS: SeedProblem[] = [
     assets: [
       {
         objectKey: SEED_IMAGE_KEY,
-        mimeType: 'image/svg+xml',
+        mimeType: 'image/png',
         altText: 'Sequence of rotating polygons',
       },
     ],
@@ -396,7 +383,7 @@ const PROBLEMS: SeedProblem[] = [
     assets: [
       {
         objectKey: SEED_IMAGE_KEY,
-        mimeType: 'image/svg+xml',
+        mimeType: 'image/png',
         altText: 'Four candidate figures arranged in a row',
       },
     ],
@@ -1347,3 +1334,4 @@ main()
   .finally(() => {
     void prisma.$disconnect();
   });
+

@@ -119,8 +119,23 @@ export function MySubmissions(): React.JSX.Element {
               examTagSlugs: detail.data.examTagSlugs,
               source: detail.data.source ?? '',
               statement: detail.data.statement,
-              options: detail.data.options.map((o) => ({ text: o.text ?? '' })),
-              correctAnswerIndex: 0,
+              assets: (detail.data.assets ?? []).map((asset) => ({
+                key: asset.key,
+                kind: asset.kind,
+                mimeType: asset.mimeType as
+                  | 'image/jpeg'
+                  | 'image/png'
+                  | 'image/webp'
+                  | 'image/gif'
+                  | 'image/avif',
+                sizeBytes: asset.sizeBytes,
+                ...(asset.altText ? { altText: asset.altText } : {}),
+              })),
+              options: detail.data.options.map((o) => ({
+                text: o.text ?? '',
+                ...(o.assetKey ? { assetKey: o.assetKey } : {}),
+              })),
+              correctAnswerIndex: detail.data.correctAnswerIndex ?? 0,
               explanation: detail.data.explanation ?? '',
               sourceUrl: detail.data.sourceUrl ?? '',
             }}

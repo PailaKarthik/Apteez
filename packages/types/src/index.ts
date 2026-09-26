@@ -1358,8 +1358,8 @@ export const EVENT_STATUSES = [
 
 export type EventStatus = (typeof EVENT_STATUSES)[number];
 
-/** Who may discover / register for an event. */
-export const EVENT_VISIBILITIES = ['PUBLIC', 'PRIVATE', 'UNIVERSITY', 'COMMUNITY'] as const;
+/** Who may discover / register for an event: exactly PUBLIC, PRIVATE, UNIVERSITY. */
+export const EVENT_VISIBILITIES = ['PUBLIC', 'PRIVATE', 'UNIVERSITY'] as const;
 
 export type EventVisibility = (typeof EVENT_VISIBILITIES)[number];
 
@@ -1411,7 +1411,7 @@ export interface EventSummaryDto {
   spotsLeft: number | null;
   registrationOpen: boolean;
   isRegistered: boolean;
-  /** True for admin-created official events, false for community (user) ones. */
+  /** True for admin-hosted official events; member-hosted events are false. */
   isOfficial: boolean;
   isPaid: boolean;
   price: number | null;
@@ -2073,7 +2073,20 @@ export interface AdminOverviewDto {
 export interface ContributionOptionDto {
   text: string | null;
   assetKey: string | null;
+  /** Read-time URL for the image option (null for text options). */
+  assetUrl: string | null;
   isCorrect: boolean;
+}
+
+/** Reviewer-visible snapshot of a contribution's question images. */
+export interface ContributionAssetViewDto {
+  key: string;
+  kind: 'QUESTION_IMAGE' | 'EXPLANATION_IMAGE';
+  mimeType: string;
+  sizeBytes: number;
+  altText: string | null;
+  /** Read-time render URL (minted per request, never persisted). */
+  url: string;
 }
 
 /** Contributor's own submission row: status + reviewer feedback, never staff notes. */
@@ -2099,7 +2112,17 @@ export interface ContributionDetailDto {
   id: string;
   title: string;
   statement: string;
+  /** Frozen question-image snapshot (storage keys; revise flows preserve them). */
+  assets: Array<{
+    key: string;
+    kind: 'QUESTION_IMAGE' | 'EXPLANATION_IMAGE';
+    mimeType: string;
+    sizeBytes: number;
+    altText: string | null;
+  }>;
   options: Array<{ text: string | null; assetKey: string | null }>;
+  /** Flagged answer position — own submission only, so revise preserves it. */
+  correctAnswerIndex: number | null;
   explanation: string | null;
   difficulty: string | null;
   categorySlug: string | null;
@@ -2121,6 +2144,8 @@ export interface ContributionAdminDto {
   id: string;
   title: string;
   statement: string;
+  /** Frozen question-image snapshot with render URLs for review. */
+  assets: ContributionAssetViewDto[];
   options: ContributionOptionDto[];
   explanation: string | null;
   difficulty: string | null;

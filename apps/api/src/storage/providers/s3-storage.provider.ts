@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -68,5 +69,16 @@ export class S3StorageProvider implements StorageProvider {
     await this.client.send(
       new DeleteObjectCommand({ Bucket: this.options.bucket, Key: sanitizeKey(key) }),
     );
+  }
+
+  async exists(key: string): Promise<boolean> {
+    try {
+      await this.client.send(
+        new HeadObjectCommand({ Bucket: this.options.bucket, Key: sanitizeKey(key) }),
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

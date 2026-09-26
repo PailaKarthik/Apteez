@@ -265,16 +265,16 @@ export class EventsService {
         },
       ];
     }
-    // Visibility scoping: anonymous + plain members see public/community plus
-    // org events they belong to; private/university rows are filtered post-query
-    // when membership cannot be expressed in a single WHERE (see below).
+    // Visibility scoping: anonymous visitors see public events only; signed-in
+    // users additionally see private/university rows filtered post-query when
+    // membership cannot be expressed in a single WHERE (see below).
     if (query.visibility) {
-      if (query.visibility !== 'PUBLIC' && query.visibility !== 'COMMUNITY' && !caller) {
+      if (query.visibility !== 'PUBLIC' && !caller) {
         throw new EventForbiddenError('Sign in to browse restricted events.');
       }
       where.visibility = query.visibility;
     } else if (!caller) {
-      where.visibility = { in: ['PUBLIC', 'COMMUNITY'] };
+      where.visibility = 'PUBLIC';
     }
     void now;
     return where;
@@ -336,8 +336,8 @@ export class EventsService {
   // ─── Creation / editing ─────────────────────────────────────────────────
 
   async create(input: EventCreateInput, caller: Caller): Promise<EventDetailDto> {
-    // Any signed-in user may create: admins mint official events, everyone
-    // else mints community events (always DRAFT until published).
+    // Any signed-in user may create: admin-hosted events are flagged official,
+    // everything else is a member-hosted event (always DRAFT until published).
     assertNoActiveContent(input.title, 'title');
     assertNoActiveContent(input.description, 'description');
     assertNoActiveContent(input.rules ?? null, 'rules');
@@ -1634,7 +1634,7 @@ export class EventsService {
     if (this.isAdmin(caller) || (caller && event.organizerId === caller.id)) {
       return;
     }
-    if (event.visibility === 'PUBLIC' || event.visibility === 'COMMUNITY') {
+    if (event.visibility === 'PUBLIC') {
       if ((action === 'register' || action === 'participate') && !caller) {
         throw new AuthRequiredError('Sign in to join this event.');
       }
@@ -1724,7 +1724,7 @@ export class EventsService {
     }
     if (event.status === 'CANCELLED' && !this.canManage(event, caller)) {
       // Cancelled events stay discoverable in past lists but gated for private.
-      if (event.visibility === 'PUBLIC' || event.visibility === 'COMMUNITY') {
+      if (event.visibility === 'PUBLIC') {
         return;
       }
     }

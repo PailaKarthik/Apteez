@@ -181,14 +181,20 @@ export async function apiFetch<T>(path: string, options: ApiRequestOptions = {})
     // doubling cross-origin HTTP traffic and every per-request server cost
     // (throttleniosk + session lookup) for zero benefit.
     const hasBody = body !== undefined;
+    // FormData (image uploads) carries its own multipart boundary — never
+    // JSON-stringify it and never set Content-Type manually.
+    const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
 
     let response: Response;
     try {
       response = await fetch(`${BASE_URL}${path}`, {
         ...init,
-        headers: { ...(hasBody ? { 'Content-Type': 'application/json' } : {}), ...(headers ?? {}) },
+        headers: {
+          ...(hasBody && !isFormData ? { 'Content-Type': 'application/json' } : {}),
+          ...(headers ?? {}),
+        },
         credentials: 'include',
-        body: hasBody ? JSON.stringify(body) : undefined,
+        body: hasBody ? ((isFormData ? body : JSON.stringify(body)) as BodyInit) : undefined,
         signal: controller.signal,
       });
     } catch (error) {

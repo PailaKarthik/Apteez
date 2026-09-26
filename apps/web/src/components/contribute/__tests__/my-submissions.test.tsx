@@ -42,6 +42,10 @@ vi.mock('@/hooks/use-problems', () => ({
   useCategories: () => ({ data: [], isPending: false, isError: false, refetch: vi.fn() }),
 }));
 
+vi.mock('@/hooks/use-upload-image', () => ({
+  useUploadImage: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -102,7 +106,9 @@ describe('MySubmissions', () => {
       id: 'c1',
       title: 'Time and work',
       statement: 'How long…?',
+      assets: [],
       options: [{ text: '2h', assetKey: null }],
+      correctAnswerIndex: 0,
       explanation: 'Because.',
       difficulty: 'EASY',
       topicName: 'Time and work',

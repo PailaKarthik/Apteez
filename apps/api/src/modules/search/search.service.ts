@@ -569,10 +569,10 @@ export class SearchService {
     };
   }
 
-  /** Anonymous callers see public/community only; members additionally see their org events + invites. */
+  /** Anonymous callers see public events only; members additionally see their org events + invites. */
   private async visibleEventFilter(userId?: string): Promise<Prisma.EventWhereInput> {
     if (!userId) {
-      return { visibility: { in: ['PUBLIC', 'COMMUNITY'] } };
+      return { visibility: 'PUBLIC' };
     }
     const [memberships, invites] = await Promise.all([
       this.prisma.organizationMember.findMany({
@@ -588,7 +588,7 @@ export class SearchService {
     const invitedIds = invites.map((row) => row.eventId);
     return {
       OR: [
-        { visibility: { in: ['PUBLIC', 'COMMUNITY'] } },
+        { visibility: 'PUBLIC' },
         ...(orgIds.length > 0 ? [{ organizationId: { in: orgIds } }] : []),
         ...(invitedIds.length > 0 ? [{ id: { in: invitedIds } }] : []),
       ],
@@ -707,7 +707,7 @@ export class SearchService {
       }),
       this.prisma.event.findMany({
         where: {
-          visibility: { in: ['PUBLIC', 'COMMUNITY'] },
+          visibility: 'PUBLIC',
           status: { in: ['PUBLISHED', 'REGISTRATION_OPEN', 'LIVE'] },
           title: { startsWith: q, mode: 'insensitive' },
         },
@@ -804,7 +804,7 @@ export class SearchService {
       }),
       this.prisma.event.findMany({
         where: {
-          visibility: { in: ['PUBLIC', 'COMMUNITY'] },
+          visibility: 'PUBLIC',
           status: { in: ['PUBLISHED', 'REGISTRATION_OPEN', 'LIVE'] },
         },
         orderBy: [{ participantCount: 'desc' }, { startAt: 'asc' }],

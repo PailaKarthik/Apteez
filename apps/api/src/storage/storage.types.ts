@@ -22,6 +22,8 @@ export interface StorageProvider {
   upload(input: UploadInput): Promise<StoredObject>;
   getDownloadUrl(key: string, expiresInSeconds?: number): Promise<string>;
   delete(key: string): Promise<void>;
+  /** True when readable bytes exist behind the key (no download). */
+  exists(key: string): Promise<boolean>;
 }
 
 /** DI token for the configured storage provider. */

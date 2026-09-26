@@ -38,6 +38,11 @@ export class StorageService {
     return this.provider.delete(key);
   }
 
+  /** True when readable bytes exist behind the key (backfills, health checks). */
+  exists(key: string): Promise<boolean> {
+    return this.provider.exists(key);
+  }
+
   /** Batch URL minting for list/detail projections (no N+1). */
   async getDownloadUrls(keys: readonly string[]): Promise<Map<string, string>> {
     const unique = [...new Set(keys)];

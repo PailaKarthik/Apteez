@@ -8,6 +8,7 @@ import type {
   ContributionReviewActionInput,
 } from '@apteez/validation';
 import { EventQueueService } from '../../queue/event-queue.service';
+import { StorageService } from '../../storage/storage.service';
 import { AiQualityService } from '../ai/ai-quality.service';
 import { AiQueueService } from '../ai/ai-queue.service';
 import { AnalyticsService } from '../analytics/analytics.service';
@@ -21,6 +22,72 @@ interface StoredOption {
   text?: string | null;
   assetKey?: string | null;
   isCorrect?: boolean;
+}
+
+interface StoredAsset {
+  key?: string | null;
+  kind?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  altText?: string | null;
+}
+
+const ASSET_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+]);
+
+/** Stored snapshot is contributor-supplied: re-validate shape, never trust it. */
+function normalizeStoredAssets(value: unknown): Array<{
+  key: string;
+  kind: 'QUESTION_IMAGE' | 'EXPLANATION_IMAGE';
+  mimeType: string;
+  sizeBytes: number;
+  altText: string | null;
+}> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out: Array<{
+    key: string;
+    kind: 'QUESTION_IMAGE' | 'EXPLANATION_IMAGE';
+    mimeType: string;
+    sizeBytes: number;
+    altText: string | null;
+  }> = [];
+  for (const entry of value.slice(0, 4)) {
+    const asset = entry as StoredAsset;
+    const key = typeof asset.key === 'string' ? asset.key.trim() : '';
+    if (
+      !key ||
+      key.includes('://') ||
+      key.startsWith('/') ||
+      key.includes('..') ||
+      (asset.kind !== 'QUESTION_IMAGE' && asset.kind !== 'EXPLANATION_IMAGE') ||
+      typeof asset.mimeType !== 'string' ||
+      !ASSET_MIME_TYPES.has(asset.mimeType) ||
+      typeof asset.sizeBytes !== 'number' ||
+      !Number.isInteger(asset.sizeBytes) ||
+      asset.sizeBytes < 1 ||
+      asset.sizeBytes > 5 * 1024 * 1024
+    ) {
+      continue;
+    }
+    out.push({
+      key,
+      kind: asset.kind,
+      mimeType: asset.mimeType,
+      sizeBytes: asset.sizeBytes,
+      altText:
+        typeof asset.altText === 'string' && asset.altText.trim()
+          ? asset.altText.trim().slice(0, 200)
+          : null,
+    });
+  }
+  return out;
 }
 
 /**
@@ -42,6 +109,7 @@ export class AdminContributionsService {
     private readonly similar: SimilarProblemService,
     private readonly analytics: AnalyticsService,
     private readonly quality: AiQualityService,
+    private readonly storage: StorageService,
   ) {}
 
   async queue(query: AdminContributionsQuery): Promise<{
@@ -114,12 +182,35 @@ export class AdminContributionsService {
     const options = (row.options as unknown as StoredOption[]).map((option) => ({
       text: option.text ?? null,
       assetKey: option.assetKey ?? null,
+      assetUrl: null as string | null,
       isCorrect: option.isCorrect === true,
     }));
+    // Reviewers must SEE the images they approve: resolve snapshot keys to
+    // read-time URLs (keys alone render nothing).
+    const storedAssets = normalizeStoredAssets(row.assets);
+    const keys = [
+      ...storedAssets.map((asset) => asset.key),
+      ...options.flatMap((option) => (option.assetKey ? [option.assetKey] : [])),
+    ];
+    const urlByKey = await this.storage.getDownloadUrls(keys);
+    const assets = storedAssets.map((asset) => ({
+      key: asset.key,
+      kind: asset.kind,
+      mimeType: asset.mimeType,
+      sizeBytes: asset.sizeBytes,
+      altText: asset.altText,
+      url: urlByKey.get(asset.key) ?? '',
+    }));
+    for (const option of options) {
+      if (option.assetKey) {
+        option.assetUrl = urlByKey.get(option.assetKey) ?? null;
+      }
+    }
     return {
       id: row.id,
       title: row.title,
       statement: row.statement,
+      assets,
       options,
       explanation: row.explanation,
       difficulty: row.difficulty,
@@ -246,6 +337,7 @@ export class AdminContributionsService {
       examTagIds = tags.map((tag) => tag.id);
     }
     const hasImage = options.some((option) => option.assetKey);
+    const storedAssets = normalizeStoredAssets(existing.assets);
     const now = new Date();
     // Sequential single statements, never an interactive transaction (the
     // pooler kills those with P2028). The status-guarded claim below is the
@@ -266,7 +358,7 @@ export class AdminContributionsService {
       data: {
         title: existing.title.slice(0, 200),
         statement: existing.statement,
-        contentMode: hasImage ? 'TEXT_AND_IMAGE' : 'TEXT_ONLY',
+        contentMode: storedAssets.length > 0 || hasImage ? 'TEXT_AND_IMAGE' : 'TEXT_ONLY',
         difficulty: existing.difficulty ?? 'MEDIUM',
         rating: existing.rating ?? 1500,
         status: 'PUBLISHED',
@@ -276,6 +368,16 @@ export class AdminContributionsService {
         categoryId,
         topicId,
         publishedAt: now,
+        assets: {
+          create: storedAssets.map((asset, index) => ({
+            kind: asset.kind,
+            objectKey: asset.key,
+            mimeType: asset.mimeType,
+            sizeBytes: asset.sizeBytes,
+            position: index,
+            altText: asset.altText,
+          })),
+        },
         options: {
           create: options.map((option, index) => ({
             position: index,
@@ -531,6 +633,7 @@ export class AdminContributionsService {
       data: {
         title,
         statement: input.statement,
+        assets: (input.assets ?? []) as unknown as object,
         options: options as unknown as object,
         explanation: input.explanation,
         difficulty: input.difficulty,

@@ -69,6 +69,21 @@ export class LocalStorageProvider implements StorageProvider {
     }
     await unlink(absolute);
   }
+
+  async exists(key: string): Promise<boolean> {
+    let absolute: string;
+    try {
+      absolute = this.resolveKey(key);
+    } catch {
+      return false;
+    }
+    try {
+      const info = await stat(absolute);
+      return info.isFile();
+    } catch {
+      return false;
+    }
+  }
 }
 
 export function defaultLocalDir(cwd = process.cwd()): string {

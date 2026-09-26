@@ -153,6 +153,7 @@ describe('AdminContributionsService', () => {
     const similar = { invalidateSimilar: jest.fn().mockResolvedValue(undefined) };
     const analytics = { record: jest.fn().mockResolvedValue(undefined) };
     const quality = { recordReviewOutcome: jest.fn().mockResolvedValue(undefined) };
+    const storage = { getDownloadUrls: jest.fn().mockResolvedValue(new Map()) };
     const service = new AdminContributionsService(
       prisma as unknown as PrismaService,
       deps.audit as never,
@@ -162,6 +163,7 @@ describe('AdminContributionsService', () => {
       similar as never,
       analytics as never,
       quality as never,
+      storage as never,
     );
     return { service, prisma, deps, quality, precheck };
   }
@@ -281,6 +283,7 @@ describe('AdminContributionsService', () => {
         correctAnswerIndex: 1,
         explanation: 'Basic addition: three plus three equals six, always true.',
         examTagSlugs: [],
+        assets: [],
       },
       REVIEWER,
     );

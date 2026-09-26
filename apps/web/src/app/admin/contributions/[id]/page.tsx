@@ -198,6 +198,18 @@ export default function AdminContributionReviewPage(): React.JSX.Element {
             <div>
               <CardTitle className="text-card-title">{data.title}</CardTitle>
               <p className="mt-2 whitespace-pre-line text-sm leading-relaxed">{data.statement}</p>
+              {(data.assets ?? []).map((asset) =>
+                asset.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- reviewer storage asset
+                  <img
+                    key={asset.key}
+                    src={asset.url}
+                    alt={asset.altText ?? 'Question illustration'}
+                    loading="lazy"
+                    className="mt-3 max-h-72 w-auto max-w-full rounded-lg border border-border object-contain"
+                  />
+                ) : null,
+              )}
             </div>
             <ol className="space-y-2">
               {data.options.map((option, index) => (
@@ -211,7 +223,19 @@ export default function AdminContributionReviewPage(): React.JSX.Element {
                   <span className="font-metric mr-2 text-muted-foreground">
                     {String.fromCharCode(65 + index)}.
                   </span>
-                  {option.text ?? '(image option)'}
+                  {option.text ? <span>{option.text}</span> : null}
+                  {option.assetUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- reviewer storage asset
+                    <img
+                      src={option.assetUrl}
+                      alt={`Option ${String.fromCharCode(65 + index)}`}
+                      loading="lazy"
+                      className="mt-2 max-h-40 w-auto max-w-full rounded-lg border border-border object-contain"
+                    />
+                  ) : null}
+                  {!option.text && !option.assetUrl ? (
+                    <span className="text-muted-foreground">(empty option)</span>
+                  ) : null}
                   {option.isCorrect ? (
                     <Badge variant="success" className="ml-2">
                       Answer
@@ -524,7 +548,24 @@ export default function AdminContributionReviewPage(): React.JSX.Element {
                 examTagSlugs: data.examTagSlugs,
                 source: data.source ?? '',
                 statement: data.statement,
-                options: data.options.map((option) => ({ text: option.text ?? '' })),
+                // Preserve images across reviewer edits: snapshot keys ride
+                // along untouched unless the reviewer attaches/removes them.
+                assets: (data.assets ?? []).map((asset) => ({
+                  key: asset.key,
+                  kind: asset.kind,
+                  mimeType: asset.mimeType as
+                    | 'image/jpeg'
+                    | 'image/png'
+                    | 'image/webp'
+                    | 'image/gif'
+                    | 'image/avif',
+                  sizeBytes: asset.sizeBytes,
+                  ...(asset.altText ? { altText: asset.altText } : {}),
+                })),
+                options: data.options.map((option) => ({
+                  text: option.text ?? '',
+                  ...(option.assetKey ? { assetKey: option.assetKey } : {}),
+                })),
                 correctAnswerIndex: Math.max(
                   0,
                   data.options.findIndex((option) => option.isCorrect),

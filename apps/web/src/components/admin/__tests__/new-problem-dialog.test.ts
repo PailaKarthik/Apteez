@@ -4,6 +4,7 @@ import { NO_TOPIC, buildProblemBody } from '../new-problem-dialog';
 const BASE = {
   title: '  Time and work  ',
   statement: '  A does work in 10 days.  ',
+  questionImage: null,
   explanation: '',
   difficulty: '' as const,
   rating: '1540',
@@ -12,9 +13,9 @@ const BASE = {
   subtopicSlug: NO_TOPIC,
   examTagInput: 'ssc, banking, ssc',
   options: [
-    { text: ' 5 days ', isCorrect: true },
-    { text: '', isCorrect: false },
-    { text: '6 days', isCorrect: false },
+    { text: ' 5 days ', image: null, isCorrect: true },
+    { text: '', image: null, isCorrect: false },
+    { text: '6 days', image: null, isCorrect: false },
   ],
 };
 
@@ -51,5 +52,40 @@ describe('buildProblemBody', () => {
     const body = buildProblemBody({ ...BASE, difficulty: 'HARD' });
     expect(body).toMatchObject({ difficulty: 'HARD' });
     expect(body).not.toHaveProperty('publish');
+  });
+
+  it('attaches a question image as a QUESTION_IMAGE asset', () => {
+    const body = buildProblemBody({
+      ...BASE,
+      questionImage: { key: 'questions/a/b.png', url: 'http://x/b.png', contentType: 'image/png', size: 12 },
+    });
+    expect(body).toMatchObject({
+      assets: [
+        { key: 'questions/a/b.png', kind: 'QUESTION_IMAGE', mimeType: 'image/png', sizeBytes: 12 },
+      ],
+    });
+  });
+
+  it('sends option image keys and drops empty options', () => {
+    const body = buildProblemBody({
+      ...BASE,
+      options: [
+        { text: '', image: { key: 'questions/a/o1.png', url: 'http://x/o1.png', contentType: 'image/png', size: 7 }, isCorrect: true },
+        { text: '', image: null, isCorrect: false },
+        { text: '6 days', image: null, isCorrect: false },
+      ],
+    });
+    expect(body).toMatchObject({
+      options: [{ assetKey: 'questions/a/o1.png', isCorrect: true }, { text: '6 days', isCorrect: false }],
+    });
+  });
+
+  it('omits an empty statement when a question image carries the content', () => {
+    const body = buildProblemBody({
+      ...BASE,
+      statement: '   ',
+      questionImage: { key: 'questions/a/b.png', url: 'http://x/b.png', contentType: 'image/png', size: 12 },
+    });
+    expect(body).not.toHaveProperty('statement');
   });
 });
