@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { PrismaService } from '@apteez/database';
 import { organizationCreateSchema, type OrganizationCreateInput } from '@apteez/validation';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -21,10 +21,20 @@ export class OrganizationsController {
 
   @OptionalAuth()
   @Get()
-  async list(@CurrentUser() user?: RequestUser) {
+  async list(@CurrentUser() user?: RequestUser, @Query('q') q?: string) {
+    // No `take` cap: the directory is small (hundreds) and the create-event
+    // dropdown must contain freshly added colleges. `q` narrows server-side.
+    const query = (q ?? '').trim().slice(0, 80);
     const rows = await this.prisma.organization.findMany({
+      where: query
+        ? {
+            OR: [
+              { name: { contains: query, mode: 'insensitive' } },
+              { slug: { contains: query, mode: 'insensitive' } },
+            ],
+          }
+        : undefined,
       orderBy: { name: 'asc' },
-      take: 100,
       include: { _count: { select: { members: true } } },
     });
     const memberOf = new Set<string>();

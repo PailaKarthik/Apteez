@@ -58,7 +58,8 @@ export function EventCreateWizard(): React.JSX.Element {
 
   const create = useCreateEvent();
   const publish = usePublishEvent(createdId ?? undefined);
-  const { data: orgs, isError: orgsError, refetch: refetchOrgs } = useOrganizations();
+  const [orgSearch, setOrgSearch] = useState('');
+  const { data: orgs, isError: orgsError, refetch: refetchOrgs } = useOrganizations(orgSearch);
   const createOrg = useCreateOrganization();
   const [newOrgName, setNewOrgName] = useState('');
 
@@ -83,6 +84,10 @@ export function EventCreateWizard(): React.JSX.Element {
         onSuccess: (org) => {
           setOrganizationId(org.id);
           setNewOrgName('');
+          // Clear any search filter so the full directory (incl. the new
+          // college) reloads — otherwise the selection would point at an
+          // option that isn't in the filtered list.
+          setOrgSearch('');
           toast.success(`"${name}" added — selected.`);
           void refetchOrgs();
         },
@@ -287,6 +292,12 @@ export function EventCreateWizard(): React.JSX.Element {
             ) : null}
             <div className="space-y-2">
               <Label>Organization (university events)</Label>
+              <Input
+                value={orgSearch}
+                onChange={(e) => setOrgSearch(e.target.value)}
+                placeholder="Search 170+ universities…"
+                aria-label="Search universities"
+              />
               <Select value={organizationId} onValueChange={setOrganizationId}>
                 <SelectTrigger>
                   <SelectValue

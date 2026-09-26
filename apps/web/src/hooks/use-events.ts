@@ -230,10 +230,14 @@ export function useInviteToEvent(eventId: string | undefined) {
   });
 }
 
-export function useOrganizations() {
+export function useOrganizations(search?: string) {
+  const q = (search ?? '').trim();
   return useQuery({
-    queryKey: ['organizations'],
-    queryFn: () => apiFetch<{ items: OrganizationDto[] }>('/organizations'),
+    queryKey: ['organizations', q],
+    queryFn: () =>
+      apiFetch<{ items: OrganizationDto[] }>(
+        `/organizations${q ? `?q=${encodeURIComponent(q)}` : ''}`,
+      ),
     staleTime: 60_000,
   });
 }
