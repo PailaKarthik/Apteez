@@ -3,7 +3,9 @@ import { problemListQuerySchema, type ProblemListQuery } from '@apteez/validatio
 import type {
   CategoryDto,
   CursorPage,
+  ExamPatternDto,
   ExamTagDto,
+  PracticeAreaDto,
   ProblemSummaryDto,
   TopicDto,
 } from '@apteez/types';
@@ -40,6 +42,26 @@ export class CatalogController {
   @Get('exam-tags')
   async examTags(): Promise<ExamTagDto[]> {
     return this.catalog.listExamTags();
+  }
+
+  /**
+   * Home exam-pattern folders: live counts, top categories and difficulty
+   * mix per exam tag. Public; per-user data never included.
+   */
+  @OptionalAuth()
+  @Get('exam-patterns')
+  async examPatterns(): Promise<ExamPatternDto[]> {
+    return this.catalog.listExamPatterns();
+  }
+
+  /**
+   * Home practice areas: categories with live counts plus the caller's own
+   * solved progress (zeros when signed out).
+   */
+  @OptionalAuth()
+  @Get('practice-areas')
+  async practiceAreas(@CurrentUser() user?: RequestUser): Promise<PracticeAreaDto[]> {
+    return this.catalog.listPracticeAreas(user?.id);
   }
 
   @OptionalAuth()

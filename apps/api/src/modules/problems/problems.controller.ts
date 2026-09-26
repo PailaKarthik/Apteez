@@ -30,6 +30,19 @@ export class ProblemsController {
     return this.problems.list(query, user?.id);
   }
 
+  /**
+   * Total for the current filters (Home library header). Static route — must
+   * stay above `:id`, otherwise "count" would hit the UUID pipe and 400.
+   */
+  @OptionalAuth()
+  @Get('count')
+  async count(
+    @Query(new ZodValidationPipe(problemListQuerySchema)) query: ProblemListQuery,
+    @CurrentUser() user?: RequestUser,
+  ): Promise<{ total: number }> {
+    return this.problems.count(query, user?.id);
+  }
+
   /** Deterministic continuation target for the practice "Next problem" action. */
   @OptionalAuth()
   @Get(':id/next')

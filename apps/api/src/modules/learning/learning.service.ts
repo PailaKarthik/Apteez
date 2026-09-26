@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@apteez/database';
+import { AnalyticsService } from '../analytics/analytics.service';
 import type {
   LearningContentBlock,
   LearningLessonDetailDto,
@@ -24,7 +25,10 @@ import {
  */
 @Injectable()
 export class LearningService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly analytics: AnalyticsService,
+  ) {}
 
   /** Explore grid: published paths with published topic/lesson counts. */
   async listPaths(userId?: string): Promise<LearningPathSummaryDto[]> {
@@ -477,11 +481,22 @@ export class LearningService {
     userId: string,
   ): Promise<LearningLessonDetailDto> {
     const lessonId = await this.requirePublishedLesson(topicSlug, lessonSlug);
+    const previous = await this.prisma.userLearningProgress.findUnique({
+      where: { userId_lessonId: { userId, lessonId } },
+      select: { status: true },
+    });
     await this.prisma.userLearningProgress.upsert({
       where: { userId_lessonId: { userId, lessonId } },
       update: { status: 'COMPLETED', completedAt: new Date(), lastViewedAt: new Date() },
       create: { userId, lessonId, status: 'COMPLETED', completedAt: new Date() },
     });
+    // Record first-time completions only so re-clicks never inflate metrics.
+    if (previous?.status !== 'COMPLETED') {
+      void this.analytics.record('learning.lesson_completed', {
+        userId,
+        metadata: { topicSlug, lessonSlug },
+      });
+    }
     return this.lessonDetail(topicSlug, lessonSlug, userId);
   }
 

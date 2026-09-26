@@ -108,13 +108,13 @@ export class GoogleOAuthService {
       throw new OAuthNotConfiguredError();
     }
     if (!code || !state) {
-      throw new InvalidOAuthError('Google sign-in was interrupted. Please try again.');
+      throw new InvalidOAuthError('Google sign-in was interrupted. Please try again.', 'expired');
     }
     const stored = await this.redis.get(redisKeys.oauthState(state));
     // Single-use: consume before any network calls (replay-safe).
     await this.redis.del(redisKeys.oauthState(state));
     if (!stored) {
-      throw new InvalidOAuthError('Google sign-in expired. Please try again.');
+      throw new InvalidOAuthError('Google sign-in expired. Please try again.', 'expired');
     }
     let next = '/';
     try {
@@ -129,21 +129,37 @@ export class GoogleOAuthService {
     const info = await this.fetchUserInfo(tokens.accessToken);
     if (!info.sub || !info.email || info.emailVerified !== true) {
       this.logger.warn('auth.oauth.unverified Google identity rejected', 'Auth');
-      throw new InvalidOAuthError('Google could not verify this account.');
+      throw new InvalidOAuthError('Google could not verify this account.', 'userinfo');
     }
     const email = info.email.trim().toLowerCase();
-    const user = await this.auth.findOrCreateOAuthUser({
-      provider: 'google',
-      providerUserId: info.sub,
-      email,
-      displayName: (info.name ?? email.split('@')[0] ?? 'ApteeZ member').trim().slice(0, 60),
-    });
-    this.logger.log(
-      `auth.oauth.login provider=google userId=${user.id} ip=${meta.ip ?? '?'}`,
-      'Auth',
-    );
-    const session = await this.auth.issueSession(user, { ...meta, via: 'oauth' });
-    return { user: session.user, token: session.token, expiresAt: session.expiresAt, next };
+    try {
+      const user = await this.auth.findOrCreateOAuthUser({
+        provider: 'google',
+        providerUserId: info.sub,
+        email,
+        displayName: (info.name ?? email.split('@')[0] ?? 'ApteeZ member').trim().slice(0, 60),
+      });
+      this.logger.log(
+        `auth.oauth.login provider=google userId=${user.id} ip=${meta.ip ?? '?'}`,
+        'Auth',
+      );
+      const session = await this.auth.issueSession(user, { ...meta, via: 'oauth' });
+      return { user: session.user, token: session.token, expiresAt: session.expiresAt, next };
+    } catch (error) {
+      // Never leak a 500 JSON page on the browser-navigated callback:
+      // infra races (P2002), missing seed data (P2025) and Redis outages
+      // all become a safe "try again" redirect. The real cause stays in
+      // server logs via the throws below being InvalidOAuthError (400).
+      if (error instanceof InvalidOAuthError || error instanceof OAuthNotConfiguredError) {
+        throw error;
+      }
+      this.logger.error(
+        `auth.oauth.provision failed provider=google email=${email} ${error instanceof Error ? error.message : String(error)}`,
+        error instanceof Error ? error.stack : undefined,
+        'Auth',
+      );
+      throw new InvalidOAuthError('Google sign-in failed. Please try again.', 'provision');
+    }
   }
 
   private async exchangeCode(code: string): Promise<{ accessToken: string }> {
@@ -166,16 +182,18 @@ export class GoogleOAuthService {
         `auth.oauth.token unreachable: ${error instanceof Error ? error.message : String(error)}`,
         'Auth',
       );
-      throw new InvalidOAuthError();
+      throw new InvalidOAuthError('Google sign-in failed. Please try again.', 'token');
     }
     if (!response.ok) {
       // Provider error bodies may contain tokens — logged never, shown never.
+      // 99% of the time this is redirect_uri_mismatch: the URI sent here must
+      // byte-match an Authorized redirect URI in Google Cloud Console.
       this.logger.warn(`auth.oauth.token rejected status=${response.status}`, 'Auth');
-      throw new InvalidOAuthError();
+      throw new InvalidOAuthError('Google sign-in failed. Please try again.', 'token');
     }
     const body = (await response.json().catch(() => null)) as GoogleTokenResponse | null;
     if (!body?.access_token) {
-      throw new InvalidOAuthError();
+      throw new InvalidOAuthError('Google sign-in failed. Please try again.', 'token');
     }
     return { accessToken: body.access_token };
   }
@@ -193,11 +211,11 @@ export class GoogleOAuthService {
         signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
       });
     } catch {
-      throw new InvalidOAuthError();
+      throw new InvalidOAuthError('Google sign-in failed. Please try again.', 'userinfo');
     }
     if (!response.ok) {
       this.logger.warn(`auth.oauth.userinfo rejected status=${response.status}`, 'Auth');
-      throw new InvalidOAuthError();
+      throw new InvalidOAuthError('Google sign-in failed. Please try again.', 'userinfo');
     }
     const body = (await response.json().catch(() => null)) as GoogleUserInfo | null;
     return {

@@ -5,7 +5,7 @@
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
-      "env": ["NEXT_PUBLIC_API_URL", "DATABASE_URL", "REDIS_URL"]
+      "env": ["NEXT_PUBLIC_API_URL", "DATABASE_URL", "DIRECT_URL", "REDIS_URL", "UPSTASH_REDIS_URL"]
     },
     "dev": {
       "dependsOn": ["^build"],

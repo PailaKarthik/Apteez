@@ -34,9 +34,11 @@ export function OptionRenderer({
       disabled={!interactive}
       aria-pressed={interactive ? selected : undefined}
       className={cn(
-        'flex w-full items-start gap-3 rounded-xl border p-3 text-left transition-colors duration-fast sm:p-4',
-        selected ? 'border-primary bg-primary/10' : 'border-border bg-elevated hover:bg-accent/50',
-        interactive ? 'cursor-pointer' : 'cursor-default',
+        'flex w-full items-start gap-3 rounded-xl border p-3 text-left transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-4',
+        selected ? 'border-primary bg-primary/10' : 'border-border bg-elevated',
+        interactive
+          ? 'cursor-pointer hover:border-primary/60 hover:bg-accent/50 active:scale-[0.99]'
+          : 'cursor-not-allowed opacity-70',
         className,
       )}
     >

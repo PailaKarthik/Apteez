@@ -11,6 +11,7 @@ import { FavoritesService } from './favorites.service';
  * resolved from the session, never from the payload. Toggling is idempotent
  * so repeated/racing heart clicks converge on a single state.
  */
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 @Controller('favorites')
 export class FavoritesController {
   constructor(private readonly favorites: FavoritesService) {}
@@ -35,10 +36,12 @@ export class FavoritesController {
     if (!user) {
       throw new AuthRequiredError('Sign in to view your favorites.');
     }
+    // Non-UUID entries are dropped: Prisma rejects malformed UUIDs with a
+    // driver error, and membership is a best-effort lookup, not validation.
     const ids = (problemIds ?? '')
       .split(',')
       .map((value) => value.trim())
-      .filter((value) => value.length > 0)
+      .filter((value) => UUID_V4_PATTERN.test(value))
       .slice(0, 100);
     return this.favorites.membership(user.id, ids);
   }

@@ -41,3 +41,10 @@ export class ContestQuestionError extends AppError {
     this.name = 'ContestQuestionError';
   }
 }
+
+export class ContestForbiddenError extends AppError {
+  constructor(message = 'Only an admin can do this.') {
+    super('FORBIDDEN', message, 403);
+    this.name = 'ContestForbiddenError';
+  }
+}

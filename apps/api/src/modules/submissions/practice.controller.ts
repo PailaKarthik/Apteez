@@ -17,7 +17,7 @@ export class PracticeController {
   constructor(private readonly practice: PracticeService) {}
 
   @Post()
-  @Throttle({ practice: {} })
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   async start(
     @Param('problemId', new ParseUUIDPipe({ version: '4' })) problemId: string,
     @CurrentUser() user?: RequestUser,
@@ -29,7 +29,7 @@ export class PracticeController {
   }
 
   @Post(':attemptId/submit')
-  @Throttle({ practice: {} })
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @HttpCode(200)
   async submit(
     @Param('problemId', new ParseUUIDPipe({ version: '4' })) problemId: string,

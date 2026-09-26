@@ -33,6 +33,27 @@ export default function DiscussionsPage(): React.JSX.Element {
   const { data, isLoading, isError, error } = useDiscussions(query);
   const createThread = useCreateThread();
 
+  // Mirror the server tag rules client-side (lowercase, spaces to hyphens,
+  // only a-z/0-9/-, deduped, max 5) so normal typing can never 400.
+  const parsedTags = useMemo(
+    () =>
+      [
+        ...new Set(
+          tags
+            .split(',')
+            .map((tag) =>
+              tag
+                .trim()
+                .toLowerCase()
+                .replace(/\s+/g, '-')
+                .replace(/[^a-z0-9-]/g, ''),
+            )
+            .filter(Boolean),
+        ),
+      ].slice(0, 5),
+    [tags],
+  );
+
   const submit = (): void => {
     if (!user) {
       toast.error('Sign in to start a discussion.');
@@ -42,10 +63,7 @@ export default function DiscussionsPage(): React.JSX.Element {
       {
         title: title.trim(),
         body: body.trim(),
-        tags: tags
-          .split(',')
-          .map((tag) => tag.trim().toLowerCase())
-          .filter(Boolean),
+        tags: parsedTags,
       },
       {
         onSuccess: () => {
@@ -56,6 +74,14 @@ export default function DiscussionsPage(): React.JSX.Element {
           setComposing(false);
         },
         onError: (err) => {
+          if (err instanceof ApiError && err.kind === 'validation' && err.details?.length) {
+            toast.error(err.details.map((detail) => detail.message).join(' '));
+            return;
+          }
+          if (err instanceof ApiError && err.status === 403) {
+            toast.error('Post refused: open the app at http://localhost:3000 and try again.');
+            return;
+          }
           toast.error(err instanceof ApiError ? err.message : 'Could not post the discussion.');
         },
       },
@@ -120,9 +146,15 @@ export default function DiscussionsPage(): React.JSX.Element {
           <input
             value={tags}
             onChange={(event) => setTags(event.target.value)}
-            placeholder="tags, comma, separated"
+            placeholder="quant, time-and-work (comma separated)"
+            aria-label="Tags, comma separated"
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
           />
+          {tags.trim() ? (
+            <p className="text-xs text-muted-foreground">
+              Tags: {parsedTags.length > 0 ? parsedTags.map((tag) => `#${tag}`).join(' ') : '—'}
+            </p>
+          ) : null}
           <div className="flex justify-end gap-2">
             <button
               type="button"
@@ -134,7 +166,9 @@ export default function DiscussionsPage(): React.JSX.Element {
             <button
               type="button"
               onClick={submit}
-              disabled={createThread.isPending || title.trim().length < 8 || body.trim().length < 10}
+              disabled={
+                createThread.isPending || title.trim().length < 8 || body.trim().length < 10
+              }
               className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
             >
               {createThread.isPending ? 'Posting...' : 'Post thread'}

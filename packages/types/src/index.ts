@@ -25,6 +25,9 @@ export type ApiErrorCode =
   | 'ACCOUNT_EXISTS'
   | 'INVALID_OAUTH'
   | 'OAUTH_NOT_CONFIGURED'
+  | 'EMAIL_NOT_CONFIGURED'
+  | 'INVALID_EMAIL_OTP'
+  | 'EMAIL_SEND_FAILED'
   | 'ATTEMPT_NOT_ACTIVE';
 
 /** Client-side classification of failures (network vs server vs domain). */
@@ -90,16 +93,30 @@ export interface DependencyHealth {
   latencyMs: number | null;
 }
 
+/** Queue depth snapshot for operational visibility. Counts only, no payloads. */
+export interface QueueHealth {
+  status: DependencyStatus;
+  waiting: number | null;
+  active: number | null;
+  delayed: number | null;
+  failed: number | null;
+}
+
 /** Payload of GET /api/v1/health. Never contains secrets or URLs. */
 export interface HealthData {
   status: 'ok' | 'degraded';
   version: string;
+  /** Deployed commit SHA (or 'unknown' when the image did not inject one). */
+  commit: string;
+  /** Release tag when the deploy was cut from one, else null. */
+  tag?: string | null;
   environment: string;
   uptimeSeconds: number;
   timestamp: string;
   checks: {
     database: DependencyHealth;
     redis: DependencyHealth;
+    queues?: Record<string, QueueHealth>;
   };
 }
 
@@ -122,6 +139,27 @@ export const QUESTION_DIFFICULTIES = ['EASY', 'MEDIUM', 'HARD'] as const;
 
 export type QuestionDifficulty = (typeof QUESTION_DIFFICULTIES)[number];
 
+/**
+ * Canonical question rating bands (whole hundreds, 1000–2000):
+ * 1000–1200 EASY, 1300–1600 MEDIUM, 1700–2000 HARD.
+ * Single source of truth — API normalization and web display both use it.
+ */
+export function difficultyForRating(rating: number): QuestionDifficulty {
+  if (rating <= 1200) {
+    return 'EASY';
+  }
+  if (rating <= 1600) {
+    return 'MEDIUM';
+  }
+  return 'HARD';
+}
+
+export const RATING_BAND_LABELS: Record<QuestionDifficulty, string> = {
+  EASY: '1000–1200',
+  MEDIUM: '1300–1600',
+  HARD: '1700–2000',
+};
+
 /** Header carrying the request/correlation id on every response. */
 export const REQUEST_ID_HEADER = 'x-request-id';
 
@@ -139,7 +177,13 @@ export interface AuthUser {
   country: string | null;
   /** University / college affiliation. */
   institution: string | null;
+  bio: string | null;
+  /** IANA timezone for activity day boundaries; null means UTC. */
+  timezone: string | null;
+  isPrivate: boolean;
   isActive: boolean;
+  /** ISO timestamp when the email was verified (OTP or OAuth), null until then. */
+  emailVerified: string | null;
   roles: string[];
   /** Flattened `action:resource` grants for frontend visibility. The backend
    * re-checks every request; these never grant anything by themselves. */
@@ -176,6 +220,19 @@ export interface CursorPage<T> {
   hasNextPage: boolean;
 }
 
+/**
+ * Offset-paginated collection for steadily growing lists (e.g. challenge
+ * history). `total` is the row count at read time; callers clamp out-of-range
+ * offsets client-side.
+ */
+export interface OffsetPage<T> {
+  items: T[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
 export interface ProblemRefDto {
   slug: string;
   name: string;
@@ -206,7 +263,8 @@ export interface ProblemSummaryDto {
   difficulty: ProblemDifficulty;
   rating: number;
   category: ProblemRefDto;
-  topic: ProblemRefDto;
+  /** Null when filed without a topic (allowed at creation). */
+  topic: ProblemRefDto | null;
   subtopic: ProblemRefDto | null;
   examTags: ProblemRefDto[];
   optionCount: number;
@@ -264,6 +322,56 @@ export interface ExamTagDto extends ProblemRefDto {
   problemCount: number;
 }
 
+/**
+ * Exam-pattern folder for the Home page: an admin-curated exam tag with its
+ * live published-problem footprint — top categories and difficulty mix.
+ * Everything is computed from the database; there are no static folders.
+ */
+export interface ExamPatternCategoryDto {
+  name: string;
+  slug: string;
+  problemCount: number;
+}
+
+export interface ExamPatternDifficultyMix {
+  easy: number;
+  medium: number;
+  hard: number;
+}
+
+export interface ExamPatternDto {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  problemCount: number;
+  topCategories: ExamPatternCategoryDto[];
+  difficultyMix: ExamPatternDifficultyMix;
+  /** Human label derived from the mix (e.g. "Easy–Med", "Hard", "New"). */
+  difficultyBand: string;
+}
+
+/**
+ * Practice-area card for the Home page: a taxonomy category with its live
+ * published count plus the caller's solved progress (0 when signed out).
+ */
+export interface PracticeAreaDto {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  icon: string | null;
+  problemCount: number;
+  solvedCount: number;
+  /** 0–100 solved share; 0 when the area is empty or the caller is anonymous. */
+  completionPct: number;
+}
+
+/** Total matching problems for the current problem-library filters. */
+export interface ProblemsCountDto {
+  total: number;
+}
+
 /** Attempt lifecycle (mirrors the Prisma enum). */
 export const ATTEMPT_STATUSES = ['STARTED', 'SUBMITTED', 'ABANDONED', 'EXPIRED'] as const;
 
@@ -313,7 +421,7 @@ export interface RecentSubmissionDto {
   id: string;
   problem: { id: string; title: string };
   category: ProblemRefDto;
-  topic: ProblemRefDto;
+  topic: ProblemRefDto | null;
   difficulty: ProblemDifficulty;
   isCorrect: boolean;
   timeSpentSeconds: number | null;
@@ -452,6 +560,8 @@ export interface ChallengeStateDto {
   domainSlug: string;
   domainName: string;
   status: ChallengeStatus;
+  /** True for unrated solo runs against the house bot (endless, timed). */
+  isSolo: boolean;
   config: ChallengeConfigDto;
   /** Which player this payload is for. */
   self: {
@@ -501,6 +611,8 @@ export interface ChallengeResultDto {
   outcome: ChallengeOutcome;
   completionReason: ChallengeCompletionReason;
   winnerId: string | null;
+  /** True for unrated solo runs — ratingChange stays null by design. */
+  isSolo: boolean;
   durationSeconds: number;
   startedAt: string | null;
   endedAt: string | null;
@@ -519,11 +631,49 @@ export interface ChallengeHistoryEntryDto {
   domainName: string;
   outcome: ChallengeOutcome;
   completionReason: ChallengeCompletionReason;
+  /** Result from the caller's point of view (solo runs always report their score). */
+  result: 'WIN' | 'LOSS' | 'DRAW';
+  /** True for unrated solo runs against the house bot. */
+  isSolo: boolean;
   selfScore: number;
   opponentScore: number;
+  /** Signed rating change for the caller; null until rating processing completes. */
+  ratingChange: number | null;
   opponent: { id: string; username: string | null; displayName: string; avatarKey: string | null };
   playedAt: string;
   durationSeconds: number;
+}
+
+/** Aggregate challenge analytics for the caller, optionally scoped to a domain. */
+export interface ChallengeHistoryStatsDto {
+  domainSlug: string | null;
+  matches: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  winRate: number;
+  bestScore: number | null;
+  avgScore: number | null;
+  totalCorrect: number;
+  totalWrong: number;
+}
+
+/**
+ * Lightweight "match found" payload. Sent the instant a challenge row exists —
+ * before the heavyweight full-state snapshot (question content, signed URLs)
+ * finishes loading — so the countdown UI can start on time even when the
+ * database is slow (free-tier cold starts).
+ */
+export interface ChallengeMatchedPayload {
+  status: 'MATCHED';
+  challengeId: string;
+  domainSlug: string;
+  domainName: string;
+  /** Server-authoritative moment the countdown ends and play begins. */
+  countdownEndsAt: string;
+  serverTime: string;
+  isSolo: boolean;
+  opponent: { displayName: string; rating: number };
 }
 
 /** Socket.IO event names for the challenge namespace (single source of truth). */
@@ -541,6 +691,8 @@ export const CHALLENGE_SOCKET_EVENTS = {
   opponentProgress: 'challenge:opponent:progress',
   playerConnected: 'challenge:player:connected',
   playerDisconnected: 'challenge:player:disconnected',
+  /** Server began finalizing (timer hit zero): client should show "checking results". */
+  finalizing: 'challenge:finalizing',
   completed: 'challenge:completed',
   error: 'challenge:error',
 } as const;
@@ -575,6 +727,16 @@ export interface ChallengeAnswerAckDto {
   /** Never includes correctness mid-challenge. */
   answeredCount: number;
   nextQuestion: ChallengeQuestionViewDto | null;
+  /**
+   * Authoritative scoreboard right after this answer, so the UI can confirm
+   * instantly without waiting for the next full state snapshot (which trails
+   * by several slow round trips on free-tier databases).
+   */
+  selfScoreboard: ChallengeScoreboardDto | null;
+  /** The answerer's fresh progress, mirrored to the opponent in the same push. */
+  selfProgress: ChallengeOpponentProgressDto;
+  /** Last-known opponent progress (no extra query); fresher values arrive live. */
+  opponentProgress: ChallengeOpponentProgressDto | null;
 }
 
 // ─── Challenge rating (Prompt 10) ────────────────────────────────────────
@@ -814,6 +976,8 @@ export interface ContestLeaderboardEntryDto {
   rank: number;
   userId: string;
   username: string | null;
+  /** Rating delta for this contest (null until ratings settle). */
+  ratingChange: number | null;
   displayName: string;
   avatarKey: string | null;
   institution: string | null;
@@ -822,6 +986,20 @@ export interface ContestLeaderboardEntryDto {
   wrongCount: number;
   completionSeconds: number;
   isCurrentUser: boolean;
+}
+
+/** Global contest-rating row: overall contest performance, rating DESC. */
+export interface ContestRatingLeaderboardEntryDto {
+  rank: number;
+  userId: string;
+  username: string | null;
+  displayName: string;
+  avatarKey: string | null;
+  institution: string | null;
+  rating: number;
+  tier: RatingTier;
+  contestsPlayed: number;
+  bestRank: number | null;
 }
 
 /** Post-contest learning view; never mutates the frozen result. */
@@ -834,6 +1012,60 @@ export interface ContestUpsolveDto {
       selectedOptionId: string | null;
     }
   >;
+}
+
+/** One attached question in the organizer manage view (never leaks correctness). */
+export interface ContestManageQuestionDto {
+  questionId: string;
+  position: number;
+  points: number;
+  problem: { id: string; title: string; difficulty: 'EASY' | 'MEDIUM' | 'HARD' };
+}
+
+/**
+ * Organizer manage view: everything the wizard needs — format, attached
+ * questions one by one, how many are still missing, and why publish is
+ * blocked (empty when it can go live).
+ */
+export interface ContestManageDto {
+  id: string;
+  title: string;
+  description: string | null;
+  rules: string | null;
+  status: ContestStatus;
+  difficulty: QuestionDifficulty;
+  questionCount: number;
+  addedCount: number;
+  durationSeconds: number;
+  durationMinutes: number;
+  startsAt: string;
+  endsAt: string;
+  registrationOpensAt: string | null;
+  registrationClosesAt: string | null;
+  maxParticipants: number | null;
+  participantCount: number;
+  resultVisibility: 'ALWAYS' | 'AFTER_END' | 'AFTER_REGISTRATION_CLOSE';
+  revealAnswersLive: boolean;
+  canPublish: boolean;
+  publishBlockers: string[];
+  questions: ContestManageQuestionDto[];
+  createdById: string | null;
+  /** Rating pipeline state: PENDING | PROCESSING | COMPLETED | FAILED. */
+  ratingStatus: string;
+}
+
+/**
+ * Unfinished contest setups the caller may manage — the resume list. Only
+ * DRAFT rows, newest first, with attach progress so the admin sees exactly
+ * where each setup left off.
+ */
+export interface ContestDraftDto {
+  id: string;
+  title: string;
+  questionCount: number;
+  addedCount: number;
+  durationMinutes: number;
+  updatedAt: string;
 }
 
 /** Integrity signal types the client may report; stored off the result path. */
@@ -1103,4 +1335,935 @@ export interface DiscussionReactionResultDto {
   targetId: string;
   reactionCount: number;
   myReaction: DiscussionReactionType | null;
+}
+
+// ─── Events (Prompt 14) ───────────────────────────────────────────────────
+// Full aptitude-events platform. Events reference canonical Problems via
+// EventQuestion rows (never duplicated content) so the future AI/RAG layer
+// (Similar Problems over pgvector, Performance Coach over results) stays
+// clean. Paid-event readiness is structural only: isPaid/price/payment
+// fields exist but no processor is wired.
+
+/** Authoritative event lifecycle; backend owns every transition. */
+export const EVENT_STATUSES = [
+  'DRAFT',
+  'PUBLISHED',
+  'REGISTRATION_OPEN',
+  'REGISTRATION_CLOSED',
+  'LIVE',
+  'COMPLETED',
+  'CANCELLED',
+  'ARCHIVED',
+] as const;
+
+export type EventStatus = (typeof EVENT_STATUSES)[number];
+
+/** Who may discover / register for an event. */
+export const EVENT_VISIBILITIES = ['PUBLIC', 'PRIVATE', 'UNIVERSITY', 'COMMUNITY'] as const;
+
+export type EventVisibility = (typeof EVENT_VISIBILITIES)[number];
+
+/** Organizer-chosen event category. */
+export const EVENT_TYPES = [
+  'CONTEST',
+  'QUIZ',
+  'WORKSHOP',
+  'MARATHON',
+  'MEETUP',
+  'AMA',
+  'HACKATHON',
+] as const;
+
+export type EventType = (typeof EVENT_TYPES)[number];
+
+export const EVENT_PARTICIPANT_STATUSES = [
+  'REGISTERED',
+  'WAITLISTED',
+  'ACTIVE',
+  'SUBMITTED',
+  'AUTO_SUBMITTED',
+  'WITHDRAWN',
+  'DISQUALIFIED',
+] as const;
+
+export type EventParticipantStatus = (typeof EVENT_PARTICIPANT_STATUSES)[number];
+
+export const EVENT_INVITE_STATUSES = ['PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED'] as const;
+
+export type EventInviteStatus = (typeof EVENT_INVITE_STATUSES)[number];
+
+/** Lightweight card for discovery lists; never carries questions. */
+export interface EventSummaryDto {
+  id: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  eventType: EventType;
+  visibility: EventVisibility;
+  status: EventStatus;
+  /** Derived bucket for tabs: live | upcoming | past. */
+  phase: 'live' | 'upcoming' | 'past';
+  difficulty: QuestionDifficulty;
+  durationMinutes: number;
+  questionCount: number;
+  participantCount: number;
+  maxParticipants: number | null;
+  spotsLeft: number | null;
+  registrationOpen: boolean;
+  isRegistered: boolean;
+  /** True for admin-created official events, false for community (user) ones. */
+  isOfficial: boolean;
+  isPaid: boolean;
+  price: number | null;
+  startsAt: string;
+  endsAt: string;
+  registrationStartAt: string | null;
+  registrationEndAt: string | null;
+  organizer: { id: string | null; displayName: string };
+  organization: { id: string | null; name: string } | null;
+}
+
+/** Full event detail. */
+export interface EventDetailDto extends EventSummaryDto {
+  bannerKey: string | null;
+  bannerUrl: string | null;
+  rules: string | null;
+  canManage: boolean;
+  canRegister: boolean;
+  registrationRestriction: string | null;
+  /** Private + code set + caller lacks bypass: show the code box, not the error. */
+  requiresCode: boolean;
+  /** University events: whether the caller already belongs to the organization. */
+  organizationIsMember: boolean;
+  /** Plaintext entry code — managers only, never in public payloads. */
+  entryCode: string | null;
+  participant: {
+    status: EventParticipantStatus;
+    registeredAt: string;
+    joinedAt: string | null;
+    completedAt: string | null;
+    score: number | null;
+    rank: number | null;
+  } | null;
+}
+
+/** One numbered slot in the event navigator. */
+export interface EventNavigatorItemDto {
+  position: number;
+  questionId: string;
+  state: 'unanswered' | 'answered' | 'review' | 'current';
+  correctness?: 'correct' | 'incorrect' | 'unanswered';
+}
+
+/** A single event question view; correctness only after completion. */
+export interface EventQuestionViewDto {
+  position: number;
+  questionId: string;
+  problemId: string;
+  title: string;
+  statement: string | null;
+  contentMode: ProblemContentMode;
+  difficulty: QuestionDifficulty;
+  assets: ProblemAssetDto[];
+  options: ProblemOptionDto[];
+  points: number;
+  selectedOptionId: string | null;
+  markedForReview: boolean;
+  answerable: boolean;
+  correctOptionId?: string | null;
+  explanation?: string | null;
+  shortcut?: string | null;
+}
+
+/** Authoritative live session snapshot; drives timer + navigator + recovery. */
+export interface EventSessionDto {
+  eventId: string;
+  status: EventStatus;
+  participantStatus: EventParticipantStatus;
+  serverTime: string;
+  startsAt: string;
+  endsAt: string;
+  startedAt: string | null;
+  effectiveEndAt: string | null;
+  remainingSeconds: number;
+  submittedAt: string | null;
+  currentPosition: number;
+  totalQuestions: number;
+  answeredCount: number;
+  unansweredCount: number;
+  reviewCount: number;
+  questions: EventNavigatorItemDto[];
+  current: EventQuestionViewDto;
+}
+
+/** Final submission preview counts. */
+export interface EventSubmitPreviewDto {
+  answeredCount: number;
+  unansweredCount: number;
+  reviewCount: number;
+  totalQuestions: number;
+}
+
+/** Persisted per-participant result. Deterministic rank: score DESC,
+ *  correctCount DESC, completionSeconds ASC, userId ASC. */
+export interface EventResultDto {
+  eventId: string;
+  userId: string;
+  score: number;
+  correctCount: number;
+  wrongCount: number;
+  unansweredCount: number;
+  completionSeconds: number;
+  rank: number | null;
+  totalParticipants: number;
+  finalizedAt: string;
+  submittedAt: string | null;
+  autoSubmitted: boolean;
+}
+
+/** One leaderboard row ordered by score DESC, time ASC, userId ASC. */
+export interface EventLeaderboardEntryDto {
+  rank: number;
+  userId: string;
+  username: string | null;
+  displayName: string;
+  avatarKey: string | null;
+  institution: string | null;
+  score: number;
+  correctCount: number;
+  wrongCount: number;
+  completionSeconds: number;
+  isCurrentUser: boolean;
+}
+
+/** Organizer-facing participant row. */
+export interface EventParticipantDto {
+  userId: string;
+  username: string | null;
+  displayName: string;
+  avatarKey: string | null;
+  institution: string | null;
+  status: EventParticipantStatus;
+  registeredAt: string;
+  joinedAt: string | null;
+  completedAt: string | null;
+  score: number | null;
+  rank: number | null;
+}
+
+/** Invite row for private/university events. */
+export interface EventInviteDto {
+  id: string;
+  eventId: string;
+  invitedUserId: string | null;
+  invitedEmail: string | null;
+  status: EventInviteStatus;
+  createdAt: string;
+  respondedAt: string | null;
+}
+
+/** Socket events for event start/end + timer sync (answers stay on REST). */
+export const EVENT_SOCKET_EVENTS = {
+  subscribe: 'event:subscribe',
+  state: 'event:state',
+  status: 'event:status',
+  error: 'event:error',
+} as const;
+
+export type EventSocketEvent = (typeof EVENT_SOCKET_EVENTS)[keyof typeof EVENT_SOCKET_EVENTS];
+
+// ─── Organizations (Prompt 14, minimal) ───────────────────────────────────
+// University / organization scoping for events. Membership-gated visibility
+// only; no billing or hierarchy in this prompt.
+
+export interface OrganizationDto {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  memberCount: number;
+  isMember: boolean;
+}
+
+// ─── Notifications (Prompt 14, minimal) ───────────────────────────────────
+// DB-backed inbox; BullMQ delivers asynchronously, PostgreSQL is the source
+// of truth. Read-state transitions are the only mutations.
+
+export const NOTIFICATION_TYPES = [
+  'EVENT_REGISTERED',
+  'EVENT_WITHDRAWN',
+  'EVENT_STARTING_SOON',
+  'EVENT_STARTED',
+  'EVENT_CANCELLED',
+  'EVENT_UPDATED',
+  'EVENT_RESULTS_PUBLISHED',
+  'POINTS_EARNED',
+  'REWARD_REDEEMED',
+  'REWARD_REFUNDED',
+  'POINTS_ADJUSTED',
+  'CONTRIBUTION_SUBMITTED',
+  'CONTRIBUTION_APPROVED',
+  'CONTRIBUTION_REJECTED',
+  'CONTRIBUTION_CHANGES_REQUESTED',
+  'MODERATION_ACTION',
+  'REPORT_RESOLVED',
+  'CONTEST_CANCELLED',
+] as const;
+
+export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
+
+/** One achievement definition with the caller's unlock state. */
+export interface AchievementDto {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  category: string;
+  points: number;
+  isUnlocked: boolean;
+  unlockedAt: string | null;
+}
+
+/** Authenticated owner's editable profile. Explicit fields only — never the raw User row. */
+export interface ProfileDto {
+  id: string;
+  email: string;
+  username: string | null;
+  displayName: string;
+  avatarKey: string | null;
+  avatarUrl: string | null;
+  country: string | null;
+  institution: string | null;
+  bio: string | null;
+  timezone: string | null;
+  isPrivate: boolean;
+  memberSince: string;
+}
+
+/** Public competitive identity. No email, no privacy-gated fields. */
+export interface PublicProfileDto {
+  username: string;
+  displayName: string;
+  avatarKey: string | null;
+  avatarUrl: string | null;
+  country: string | null;
+  institution: string | null;
+  bio: string | null;
+  memberSince: string;
+  solvedCount: number;
+  accuracy: number | null;
+  bestRating: number | null;
+  tier: string | null;
+  achievements: AchievementDto[];
+}
+
+/** Aggregate over authoritative submission records. */
+export interface PerformanceOverallDto {
+  totalAttempted: number;
+  totalSolved: number;
+  distinctSolved: number;
+  /** Published problems in the library (the LeetCode-style denominator). */
+  totalProblems: number;
+  accuracy: number | null;
+  avgTimeSeconds: number | null;
+  currentChallengeRating: number | null;
+  currentContestRating: number | null;
+}
+
+/** Per-domain (Category) breakdown with a recent trend signal. */
+export interface DomainPerformanceDto {
+  domainSlug: string;
+  domainName: string;
+  attempts: number;
+  solved: number;
+  accuracy: number | null;
+  avgTimeSeconds: number | null;
+  /** Recent accuracy minus overall accuracy, in percentage points. */
+  recentTrend: number | null;
+}
+
+/** Per-topic breakdown within a domain. */
+export interface TopicPerformanceDto {
+  topicSlug: string;
+  topicName: string;
+  domainSlug: string;
+  domainName: string;
+  attempts: number;
+  solved: number;
+  accuracy: number | null;
+  avgTimeSeconds: number | null;
+  recentTrend: number | null;
+}
+
+/** Per-difficulty breakdown. */
+export interface DifficultyPerformanceDto {
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD';
+  attempts: number;
+  solved: number;
+  accuracy: number | null;
+  avgTimeSeconds: number | null;
+  recentTrend: number | null;
+}
+
+/**
+ * Deterministic weak-area signal for the future AI Performance Coach.
+ * Never based on accuracy alone: attempts, recency, difficulty mix and
+ * solving time all contribute. Topics below the attempt threshold are
+ * never labeled — insufficient data is reported as eligibility instead.
+ */
+export interface WeakAreaDto {
+  topicSlug: string;
+  topicName: string;
+  domainSlug: string;
+  domainName: string;
+  attempts: number;
+  accuracy: number | null;
+  avgTimeSeconds: number | null;
+  recentTrend: number | null;
+  severity: 'high' | 'medium' | 'low';
+  reason: string;
+}
+
+/** One rating-history point for charts, unified across engines. */
+export interface RatingPointDto {
+  date: string;
+  source: 'challenge' | 'contest';
+  domain: string | null;
+  before: number;
+  after: number;
+  change: number;
+}
+
+/** One heatmap day. Counts only — breakdowns stay private. */
+export interface ActivityDayDto {
+  date: string;
+  count: number;
+  solved: number;
+  /** Practice problems attempted that day (submissions, right or wrong). */
+  attempted: number;
+}
+
+/** Server-owned streak state. */
+export interface StreakDto {
+  current: number;
+  longest: number;
+  lastActiveDate: string | null;
+  activeToday: boolean;
+}
+
+/** Point ledger summary. Balances mirror the UserPoints row; the ledger explains them. */
+export interface PointsSummaryDto {
+  total: number;
+  earned: number;
+  lifetimeEarned: number;
+  lifetimeSpent: number;
+  recent: Array<{
+    id: string;
+    amount: number;
+    type: string;
+    reason: string;
+    description: string | null;
+    createdAt: string;
+    balanceAfter: number;
+  }>;
+}
+
+/** One ledger row for paginated history. */
+export interface PointsHistoryItemDto {
+  id: string;
+  amount: number;
+  type: string;
+  reason: string;
+  description: string | null;
+  sourceType: string | null;
+  balanceAfter: number;
+  createdAt: string;
+}
+
+/** Centralized reward rule (amounts and caps are server-owned). */
+export interface RewardRuleDto {
+  key: string;
+  name: string;
+  description: string | null;
+  points: number;
+  category: string;
+  dailyCap: number | null;
+}
+
+/**
+ * Full rule row for admin management: firing trigger, lifetime/cooldown
+ * limits, validity window and the active flag.
+ */
+export interface RewardRuleAdminDto {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  points: number;
+  trigger: string;
+  category: string;
+  dailyCap: number | null;
+  maxPerUser: number | null;
+  cooldownSeconds: number | null;
+  validFrom: string | null;
+  validTo: string | null;
+  isActive: boolean;
+  updatedAt: string;
+}
+
+/** Achievement definition for admin management (unlock logic stays code-driven). */
+export interface AchievementAdminDto {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  category: string;
+  points: number;
+  isActive: boolean;
+  unlockCount: number;
+}
+
+/** Catalog reward. Stock is informational — redemption revalidates server-side. */
+export interface RewardDto {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  pointsCost: number;
+  imageUrl: string | null;
+  stockQuantity: number | null;
+  inStock: boolean;
+  isActive: boolean;
+  affordable: boolean;
+}
+
+/** Redemption record with cost snapshot. */
+export interface RedemptionDto {
+  id: string;
+  rewardId: string;
+  rewardName: string;
+  pointsCost: number;
+  status: string;
+  createdAt: string;
+  processedAt: string | null;
+  cancelledAt: string | null;
+}
+
+/** Lightweight abuse signal for admin review. Never auto-bans. */
+export interface SuspiciousFlagDto {
+  userId: string;
+  username: string | null;
+  displayName: string;
+  signal: string;
+  detail: string;
+  pointsToday: number;
+}
+
+/** Unified recent-activity feed item. */
+export interface RecentActivityItemDto {
+  id: string;
+  kind: 'solve' | 'challenge' | 'contest' | 'event' | 'achievement' | 'contribution' | 'lesson';
+  title: string;
+  detail: string | null;
+  occurredAt: string;
+}
+
+/** Deterministic "next focus" for Home — real performance data, no LLM. */
+export interface NextFocusDto {
+  topicSlug: string | null;
+  topicName: string | null;
+  domainSlug: string | null;
+  domainName: string | null;
+  reason: string;
+  accuracy: number | null;
+  attempts: number;
+  streak: StreakDto;
+  ratingTrend: number;
+}
+
+export interface NotificationDto {
+  id: string;
+  type: NotificationType;
+  title: string;
+  body: string | null;
+  eventId: string | null;
+  isRead: boolean;
+  createdAt: string;
+}
+
+// ─── Search + Discovery (Prompt 17) ─────────────────────────────────────
+// Lexical, deterministic search over PostgreSQL. Ranking is an explicit
+// priority ladder (exact id → exact title → prefix → full-text → trigram →
+// topic/exam), never semantic. The future RAG Similar Problems pipeline sits
+// behind SimilarProblemService and does not touch these contracts.
+
+export const SEARCH_RESULT_TYPES = [
+  'PROBLEM',
+  'TOPIC',
+  'LEARNING',
+  'CONTEST',
+  'EVENT',
+  'DISCUSSION',
+] as const;
+
+export type SearchResultType = (typeof SEARCH_RESULT_TYPES)[number];
+
+export interface TopicSearchResultDto {
+  kind: 'TOPIC';
+  id: string;
+  name: string;
+  slug: string;
+  domainSlug: string;
+  domainName: string;
+  problemCount: number;
+}
+
+export interface LearningSearchResultDto {
+  kind: 'LEARNING';
+  contentKind: 'path' | 'topic' | 'lesson';
+  id: string;
+  slug: string;
+  title: string;
+  pathSlug: string;
+  pathTitle: string;
+  topicSlug: string | null;
+  topicTitle: string | null;
+}
+
+export interface SearchSuggestionsDto {
+  problems: Array<{ id: string; title: string }>;
+  topics: Array<{ slug: string; name: string }>;
+  contests: Array<{ id: string; title: string }>;
+  events: Array<{ id: string; title: string }>;
+  discussions: Array<{ id: string; title: string }>;
+}
+
+export interface ProblemFilterMetadataDto {
+  topics: Array<{ slug: string; name: string; domainSlug: string; problemCount: number }>;
+  difficulties: Array<'EASY' | 'MEDIUM' | 'HARD'>;
+  exams: Array<{ slug: string; name: string; problemCount: number }>;
+  rating: { min: number; max: number };
+}
+
+export interface TrendingContentDto {
+  problems: ProblemSummaryDto[];
+  contests: ContestSummaryDto[];
+  events: EventSummaryDto[];
+  discussions: DiscussionThreadSummaryDto[];
+}
+
+export interface RecentSearchDto {
+  query: string;
+  resultType: SearchResultType | null;
+  searchedAt: string;
+}
+
+// ─── Deterministic personalization (Prompt 17) ──────────────────────────
+// Rule-based recommendations with human-readable reasons. No LLM, no random
+// picks. Cold-start users get popularity-based discovery explicitly labeled
+// as such. These services double as future LangGraph tool implementations.
+
+export interface RecommendedProblemDto {
+  problem: ProblemSummaryDto;
+  reason: string;
+  priority: number;
+  source: 'weak-area' | 'recent-topic' | 'favorites' | 'level-fit' | 'popular';
+}
+
+export interface RecommendedTopicDto {
+  topicSlug: string;
+  topicName: string;
+  domainSlug: string;
+  domainName: string;
+  reason: string;
+  priority: number;
+  source: 'weak-area' | 'recent' | 'popular';
+}
+
+export interface ContinueLearningDto {
+  lessonId: string;
+  lessonSlug: string;
+  lessonTitle: string;
+  topicSlug: string;
+  topicTitle: string;
+  pathSlug: string;
+  pathTitle: string;
+  status: 'STARTED' | 'UNSTARTED';
+  reason: string;
+}
+
+export interface RecommendedContestDto {
+  contest: ContestSummaryDto;
+  reason: string;
+}
+
+export interface RecommendedEventDto {
+  event: EventSummaryDto;
+  reason: string;
+}
+
+export interface HomeRecommendationsDto {
+  focus: NextFocusDto;
+  continueLearning: ContinueLearningDto[];
+  problems: RecommendedProblemDto[];
+  contests: RecommendedContestDto[];
+  events: RecommendedEventDto[];
+}
+
+// ─── Admin Panel + Moderation (Prompt 18) ───────────────────────────────
+// Explicit whitelisted DTOs. Admin responses never include password hashes,
+// session secrets, OAuth secrets, tokens, or internal review notes meant
+// only for other staff.
+
+export const ACCOUNT_STATUSES = ['ACTIVE', 'SUSPENDED', 'BANNED', 'DEACTIVATED'] as const;
+
+export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
+
+export interface AdminUserDto {
+  id: string;
+  email: string;
+  username: string | null;
+  displayName: string;
+  country: string | null;
+  institution: string | null;
+  isActive: boolean;
+  accountStatus: AccountStatus;
+  suspendedUntil: string | null;
+  statusReason: string | null;
+  emailVerified: string | null;
+  roles: string[];
+  createdAt: string;
+}
+
+export interface AdminUserDetailDto extends AdminUserDto {
+  avatarKey: string | null;
+  timezone: string | null;
+  isPrivate: boolean;
+  stats: {
+    solvedCount: number;
+    submissions: number;
+    challengesPlayed: number;
+    contestsEntered: number;
+    eventsJoined: number;
+    contributions: { total: number; approved: number };
+    points: number;
+    reportsFiledAgainst: number;
+  };
+}
+
+export interface AdminOverviewDto {
+  users: { total: number; active: number; new7d: number; suspended: number };
+  content: {
+    publishedProblems: number;
+    pendingContributions: number;
+    rejectedContributions: number;
+    reportedProblems: number;
+  };
+  competition: {
+    liveContests: number;
+    upcomingContests: number;
+    liveEvents: number;
+    upcomingEvents: number;
+  };
+  community: { openReports: number; openDiscussionReports: number; activeChallenges: number };
+  rewards: { activeRewards: number; pendingRedemptions: number; pointsEarnedToday: number };
+  generatedAt: string;
+}
+
+export interface ContributionOptionDto {
+  text: string | null;
+  assetKey: string | null;
+  isCorrect: boolean;
+}
+
+/** Contributor's own submission row: status + reviewer feedback, never staff notes. */
+export interface ContributionMineItemDto {
+  id: string;
+  title: string;
+  status: ContributionStatus;
+  feedback: string | null;
+  resultingProblemId: string | null;
+  submittedAt: string;
+}
+
+export interface ContributionMinePageDto {
+  items: ContributionMineItemDto[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+/** Owner-safe contribution detail: feedback visible, flags and notes never. */
+export interface ContributionDetailDto {
+  id: string;
+  title: string;
+  statement: string;
+  options: Array<{ text: string | null; assetKey: string | null }>;
+  explanation: string | null;
+  difficulty: string | null;
+  categorySlug: string | null;
+  categoryName: string | null;
+  topicName: string | null;
+  rating: number | null;
+  examTagSlugs: string[];
+  source: string | null;
+  sourceUrl: string | null;
+  status: ContributionStatus;
+  feedback: string | null;
+  resultingProblemId: string | null;
+  submittedAt: string;
+  reviewedAt: string | null;
+}
+
+/** Admin-only contribution view: includes the flagged answer + staff notes. */
+export interface ContributionAdminDto {
+  id: string;
+  title: string;
+  statement: string;
+  options: ContributionOptionDto[];
+  explanation: string | null;
+  difficulty: string | null;
+  topic: { id: string; name: string; slug: string } | null;
+  category: { id: string; name: string; slug: string } | null;
+  rating: number | null;
+  examTagSlugs: string[];
+  source: string | null;
+  sourceUrl: string | null;
+  status: ContributionStatus;
+  contributor: { id: string; username: string | null; displayName: string };
+  reviewer: { id: string; username: string | null; displayName: string } | null;
+  reviewerNote: string | null;
+  feedbackForContributor: string | null;
+  submittedAt: string;
+  reviewedAt: string | null;
+  resultingProblemId: string | null;
+  aiReviews: AiReviewDto[];
+  duplicateCandidates: DuplicateCandidateDto[];
+}
+
+export interface AiReviewDto {
+  id: string;
+  model: string;
+  /** True when produced by the AI reviewer (vs the deterministic precheck). */
+  aiGenerated: boolean;
+  suggestedTopic: string | null;
+  suggestedSubtopic: string | null;
+  suggestedDifficulty: string | null;
+  duplicateProbability: number | null;
+  answerConsistent: boolean | null;
+  issues: string[];
+  recommendation: 'APPROVE' | 'REVIEW' | 'REJECT';
+  createdAt: string;
+}
+
+export interface DuplicateCandidateDto {
+  problemId: string;
+  title: string;
+  similarity: number;
+  /** Retrieval channel: trigram title match, vector semantic match, or both. */
+  source: 'trigram' | 'vector' | 'both';
+}
+
+export interface ReportDto {
+  id: string;
+  reporter: { id: string; username: string | null; displayName: string };
+  targetType: string;
+  targetId: string;
+  targetTitle: string | null;
+  reason: string;
+  description: string | null;
+  status: string;
+  priority: string;
+  assignedModerator: { id: string; username: string | null; displayName: string } | null;
+  resolution: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface AuditLogDto {
+  id: string;
+  actor: { id: string; username: string | null; displayName: string };
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  previousValue: unknown;
+  newValue: unknown;
+  reason: string | null;
+  ip: string | null;
+  createdAt: string;
+}
+
+export interface AdminProblemDto {
+  id: string;
+  title: string;
+  status: string;
+  difficulty: string;
+  rating: number;
+  category: string;
+  /** Null when the problem was filed without a topic (allowed at creation). */
+  topic: string | null;
+  /** Exam-folder slugs this problem is filed under (admin-curated). */
+  examTags: string[];
+  attempts: number;
+  accuracy: number | null;
+  reports: number;
+  createdAt: string;
+  publishedAt: string | null;
+}
+
+export interface DiscussionReportAdminDto {
+  id: string;
+  reporter: { id: string; username: string | null; displayName: string };
+  postId: string | null;
+  replyId: string | null;
+  targetTitle: string | null;
+  reason: string;
+  detail: string | null;
+  status: string;
+  createdAt: string;
+}
+
+export interface AdminContestDto {
+  id: string;
+  title: string;
+  slug: string;
+  status: string;
+  startsAt: string;
+  endsAt: string;
+  participantCount: number;
+  questionCount: number;
+}
+
+export interface ContestParticipantAdminDto {
+  userId: string;
+  username: string | null;
+  displayName: string;
+  status: string;
+  score: number | null;
+  rank: number | null;
+  submittedAt: string | null;
+}
+
+/** Release identity for operators: version + commit (+tag when tagged). */
+export interface ReleaseInfo {
+  version: string;
+  commit: string;
+  tag: string | null;
+  environment: string;
+  uptimeSeconds: number;
+  timestamp: string;
+}
+
+/** User-submitted feedback row (reporter identity trimmed for anonymity). */
+export interface FeedbackDto {
+  id: string;
+  reporter: { id: string; username: string | null; displayName: string } | null;
+  category: string;
+  description: string;
+  page: string | null;
+  status: string;
+  priority: string;
+  createdAt: string;
+  resolvedAt: string | null;
 }

@@ -1,46 +1,73 @@
+import { ArrowRight, GraduationCap } from 'lucide-react';
+import Link from 'next/link';
+import { Button, Card, CardContent, ComingSoonBadge } from '@apteez/ui';
 import { pageMetadata } from '@/lib/metadata';
 import { PageHeader } from '@/components/shared/page-header';
 import { PageStack } from '@/components/layout/page-container';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@apteez/ui';
-import { ProblemBrowser } from '@/components/problems/problem-browser';
-import { LearningPaths } from '@/components/learning/learning-paths';
-import type { ProblemFilters } from '@/hooks/use-problems';
 
-export const metadata = pageMetadata(
-  'Explore',
-  'Explore the ApteeZ question library and learning paths.',
-);
+export const metadata = pageMetadata('Explore', 'Upload and take courses on ApteeZ — coming soon.');
 
-interface ExplorePageProps {
-  searchParams: { category?: string; exam?: string; difficulty?: string; sort?: string };
-}
+const PLANNED = [
+  {
+    title: 'Instructor uploads',
+    description: 'Publish structured courses with lessons, examples and practice sets.',
+  },
+  {
+    title: 'Guided paths',
+    description: 'Follow a syllabus from fundamentals to exam-ready, step by step.',
+  },
+  {
+    title: 'Course practice',
+    description: 'Every lesson links straight into the live question library.',
+  },
+];
 
-export default function ExplorePage({ searchParams }: ExplorePageProps): React.JSX.Element {
-  const initialFilters: ProblemFilters = {
-    ...(searchParams.category ? { category: searchParams.category } : {}),
-    ...(searchParams.exam ? { exam: searchParams.exam } : {}),
-    ...(searchParams.difficulty ? { difficulty: searchParams.difficulty } : {}),
-    ...(searchParams.sort ? { sort: searchParams.sort } : {}),
-  };
-
+/**
+ * Explore is reserved for user-uploaded courses. Nothing has started here —
+ * the page is fully Coming Soon with no half-wired surfaces.
+ */
+export default function ExplorePage(): React.JSX.Element {
   return (
     <PageStack>
-      <PageHeader
-        title="Explore"
-        description="Learn aptitude topics then test yourself against the question library."
-      />
-      <Tabs defaultValue="learn">
-        <TabsList aria-label="Explore content">
-          <TabsTrigger value="learn">Learn</TabsTrigger>
-          <TabsTrigger value="questions">Questions</TabsTrigger>
-        </TabsList>
-        <TabsContent value="learn" className="pt-6">
-          <LearningPaths />
-        </TabsContent>
-        <TabsContent value="questions" className="pt-6">
-          <ProblemBrowser initialFilters={initialFilters} />
-        </TabsContent>
-      </Tabs>
+      <PageHeader title="Explore" description="Courses uploaded by educators and the community." />
+      <Card className="overflow-hidden">
+        <CardContent className="flex flex-col items-start gap-5 bg-gradient-to-br from-primary/10 via-card to-card p-6 sm:p-10">
+          <ComingSoonBadge />
+          <div className="max-w-xl space-y-3">
+            <h2 className="flex items-center gap-2 text-section-title text-foreground sm:text-2xl">
+              <GraduationCap className="size-6 text-primary" aria-hidden />
+              Courses are coming to Explore.
+            </h2>
+            <p className="text-sm leading-relaxed text-muted-foreground sm:text-base">
+              Upload your own courses, follow guided paths and practice alongside every lesson.
+              Course uploads have not started yet — this page stays as its home until the feature
+              ships. Meanwhile the Home page folders and problem library are fully live.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild>
+              <Link href="/">
+                Browse the library
+                <ArrowRight aria-hidden />
+              </Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link href="/challenge">Practice meanwhile</Link>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        {PLANNED.map((item) => (
+          <Card key={item.title}>
+            <CardContent className="space-y-1.5 p-5">
+              <p className="text-sm font-semibold text-foreground">{item.title}</p>
+              <p className="text-sm leading-relaxed text-muted-foreground">{item.description}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
     </PageStack>
   );
 }

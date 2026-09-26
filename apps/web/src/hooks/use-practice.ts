@@ -1,15 +1,22 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import type {
   AttemptDto,
   AttemptResultDto,
-  CursorPage,
+  OffsetPage,
   ProblemDetailDto,
   ProblemUserStatsDto,
   RecentSubmissionDto,
 } from '@apteez/types';
 import { apiFetch } from '@/lib/api-client';
+import { invalidateActivityQueries } from '@/lib/invalidate-activity';
 
 /** Start (or resume) a practice attempt. Created when the user engages. */
 export function useStartAttempt(problemId: string | undefined) {
@@ -53,10 +60,41 @@ export function useNextProblem(problemId: string | undefined) {
   });
 }
 
+export const RECENT_PRACTICE_PAGE_SIZE = 10;
+
+/**
+ * Offset-paginated practice feed, accumulated page by page ("Show more").
+ * Pages are offset-addressed (?limit&offset), so refetches stay consistent
+ * while the user pages through a growing history.
+ */
+export function useRecentPracticeFeed(pageSize = RECENT_PRACTICE_PAGE_SIZE) {
+  const query = useInfiniteQuery({
+    queryKey: ['submissions', 'recent', pageSize],
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) =>
+      apiFetch<OffsetPage<RecentSubmissionDto>>(
+        `/submissions/recent?limit=${pageSize}&offset=${pageParam}`,
+      ),
+    getNextPageParam: (lastPage) =>
+      lastPage.hasMore ? lastPage.offset + lastPage.items.length : undefined,
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
+  });
+  const pages = query.data?.pages ?? [];
+  const total = pages[0]?.total ?? 0;
+  return {
+    ...query,
+    items: pages.flatMap((page) => page.items),
+    total,
+  };
+}
+
+/** @deprecated Use useRecentPracticeFeed (offset-paged) instead. */
 export function useRecentPractice(limit = 20) {
   return useQuery({
-    queryKey: ['submissions', 'recent', limit],
-    queryFn: () => apiFetch<CursorPage<RecentSubmissionDto>>(`/submissions/recent?limit=${limit}`),
+    queryKey: ['submissions', 'recent', 'legacy', limit],
+    queryFn: () =>
+      apiFetch<OffsetPage<RecentSubmissionDto>>(`/submissions/recent?limit=${limit}&offset=0`),
     staleTime: 15_000,
   });
 }
@@ -78,6 +116,8 @@ export function usePracticeCacheSync(): {
     void queryClient.invalidateQueries({ queryKey: ['problems', 'stats', result.problem.id] });
     void queryClient.invalidateQueries({ queryKey: ['problems', 'feed'] });
     void queryClient.invalidateQueries({ queryKey: ['submissions', 'recent'] });
+    // Streak, heatmap, performance and progress all derive from this submit.
+    invalidateActivityQueries(queryClient);
   };
   return { syncAfterSubmit };
 }

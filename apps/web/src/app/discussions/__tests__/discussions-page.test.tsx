@@ -4,7 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import DiscussionsPage from '../page';
 
 const state = vi.hoisted(() => ({
-  discussions: { data: undefined as unknown, isLoading: false, isError: false, error: undefined as unknown },
+  discussions: {
+    data: undefined as unknown,
+    isLoading: false,
+    isError: false,
+    error: undefined as unknown,
+  },
   createThread: { mutate: vi.fn(), isPending: false },
   user: { id: 'u1' } as unknown,
 }));
@@ -62,7 +67,10 @@ function thread(id: string, title: string, overrides: Record<string, unknown> = 
 
 describe('DiscussionsPage', () => {
   it('renders the empty state when there are no threads', () => {
-    state.discussions.data = { items: [], meta: { page: 1, pageSize: 20, total: 0, totalPages: 1 } };
+    state.discussions.data = {
+      items: [],
+      meta: { page: 1, pageSize: 20, total: 0, totalPages: 1 },
+    };
     render(<DiscussionsPage />);
     expect(screen.getByText(/No threads yet/i)).toBeDefined();
   });
@@ -86,7 +94,10 @@ describe('DiscussionsPage', () => {
   });
 
   it('disables posting until the title and body are long enough', () => {
-    state.discussions.data = { items: [], meta: { page: 1, pageSize: 20, total: 0, totalPages: 1 } };
+    state.discussions.data = {
+      items: [],
+      meta: { page: 1, pageSize: 20, total: 0, totalPages: 1 },
+    };
     render(<DiscussionsPage />);
     fireEvent.click(screen.getByRole('button', { name: /New thread/i }));
     const submit = screen.getByRole('button', { name: /Post thread/i });
@@ -97,6 +108,8 @@ describe('DiscussionsPage', () => {
     fireEvent.change(screen.getByPlaceholderText('Share your question or strategy...'), {
       target: { value: 'A body that is long enough' },
     });
-    expect(screen.getByRole('button', { name: /Post thread/i }).hasAttribute('disabled')).toBe(false);
+    expect(screen.getByRole('button', { name: /Post thread/i }).hasAttribute('disabled')).toBe(
+      false,
+    );
   });
 });

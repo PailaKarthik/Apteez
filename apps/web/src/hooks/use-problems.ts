@@ -1,6 +1,11 @@
 'use client';
 
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import type {
   CategoryDto,
   CursorPage,
@@ -24,10 +29,17 @@ export interface ProblemFilters {
   sort?: string;
 }
 
-function toQueryString(params: Record<string, string | number | boolean | undefined>): string {
+/**
+ * Shared query-string builder. `false` booleans are serialized (the API
+ * distinguishes `solved=false` from an absent filter); only undefined and
+ * empty strings are dropped.
+ */
+export function toQueryString(
+  params: Record<string, string | number | boolean | undefined>,
+): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === '' || value === false) {
+    if (value === undefined || value === '') {
       continue;
     }
     search.set(key, String(value));
@@ -46,12 +58,33 @@ export function useProblemsFeed(filters: ProblemFilters, limit = 12) {
         `/problems${toQueryString({ ...filters, limit, cursor: pageParam })}`,
       ),
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    placeholderData: keepPreviousData,
   });
 
   return {
     ...query,
     problems: query.data?.pages.flatMap((page) => page.items) ?? [],
   };
+}
+
+/**
+ * Warm a folder's first page before the user opens it (card hover/focus).
+ * Opening then renders instantly from cache instead of fetching on click.
+ */
+export function usePrefetchProblemsFeed() {
+  const queryClient = useQueryClient();
+  return (filters: ProblemFilters, limit = 12) =>
+    void queryClient.prefetchInfiniteQuery({
+      queryKey: ['problems', 'feed', filters, limit],
+      initialPageParam: undefined as string | undefined,
+      queryFn: ({ pageParam }) =>
+        apiFetch<CursorPage<ProblemSummaryDto>>(
+          `/problems${toQueryString({ ...filters, limit, cursor: pageParam })}`,
+        ),
+      getNextPageParam: (lastPage: CursorPage<ProblemSummaryDto>) =>
+        lastPage.nextCursor ?? undefined,
+      staleTime: 15_000,
+    });
 }
 
 export function useProblem(id: string | undefined) {

@@ -1,7 +1,7 @@
 import { randomBytes, scryptSync } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '../generated/client';
 
 /**
  * Development seed for the ApteeZ database foundation.
@@ -35,50 +35,22 @@ function devPasswordHash(): string {
   return `scrypt$16384$8$1$${salt}$${derived.toString('hex')}`;
 }
 
-const ROLES: Array<{ name: string; description: string }> = [
-  { name: 'user', description: 'Default role for every registered member.' },
-  { name: 'contributor', description: 'May submit aptitude questions for review.' },
-  { name: 'moderator', description: 'Moderates discussions and community content.' },
-  { name: 'content_reviewer', description: 'Reviews contributed questions.' },
-  { name: 'organizer', description: 'Creates and manages contests and events.' },
-  { name: 'admin', description: 'Full platform administration.' },
-  { name: 'super_admin', description: 'Unrestricted access, including role management.' },
-];
-
-const PERMISSIONS: Array<{ action: string; resource: string; description: string }> = [
-  { action: 'read', resource: 'questions', description: 'Read the question library.' },
-  { action: 'submit', resource: 'contributions', description: 'Submit questions for review.' },
-  { action: 'review', resource: 'contributions', description: 'Approve or reject contributions.' },
-  { action: 'manage', resource: 'questions', description: 'Create, edit and archive questions.' },
-  { action: 'manage', resource: 'contests', description: 'Create and run contests.' },
-  { action: 'manage', resource: 'events', description: 'Create and run events.' },
-  { action: 'moderate', resource: 'discussions', description: 'Hide, lock and pin discussions.' },
-  {
-    action: 'manage',
-    resource: 'rewards',
-    description: 'Manage points, achievements and targets.',
-  },
-  { action: 'manage', resource: 'users', description: 'Deactivate users and assign roles.' },
-  { action: 'view', resource: 'analytics', description: 'View platform analytics.' },
-  { action: 'manage', resource: 'platform', description: 'Full administrative access.' },
-];
-
-const GRANTS: Array<{ role: string; action: string; resource: string }> = [
-  { role: 'user', action: 'read', resource: 'questions' },
-  { role: 'contributor', action: 'submit', resource: 'contributions' },
-  { role: 'moderator', action: 'moderate', resource: 'discussions' },
-  { role: 'moderator', action: 'review', resource: 'contributions' },
-  { role: 'content_reviewer', action: 'review', resource: 'contributions' },
-  { role: 'organizer', action: 'manage', resource: 'contests' },
-  { role: 'organizer', action: 'manage', resource: 'events' },
-  { role: 'admin', action: 'manage', resource: 'users' },
-  { role: 'admin', action: 'manage', resource: 'questions' },
-  { role: 'admin', action: 'manage', resource: 'contests' },
-  { role: 'admin', action: 'manage', resource: 'events' },
-  { role: 'admin', action: 'manage', resource: 'rewards' },
-  { role: 'admin', action: 'view', resource: 'analytics' },
-  { role: 'super_admin', action: 'manage', resource: 'platform' },
-];
+// Structural RBAC + taxonomy live in ./seed-data (shared with the production
+// bootstrap). This dev seed adds clearly-marked dev content on top.
+import {
+  ACHIEVEMENTS,
+  CATEGORIES,
+  EXAM_TAGS,
+  PERMISSIONS,
+  REWARD_RULES,
+  ROLES,
+  SUBTOPICS,
+  TOPICS,
+  seedRbac,
+  seedOrganizations,
+  seedRewards,
+  seedTaxonomy,
+} from './seed-data';
 
 const DEV_USERS: Array<{
   email: string;
@@ -92,181 +64,16 @@ const DEV_USERS: Array<{
     username: 'apteez_admin',
     displayName: 'ApteeZ Admin (dev)',
     bio: 'Development seed administrator.',
-    roles: ['super_admin', 'admin'],
+    roles: ['admin'],
   },
   {
     email: 'member@apteez.dev',
     username: 'apteez_member',
     displayName: 'ApteeZ Member (dev)',
     bio: 'Development seed member.',
-    roles: ['user', 'contributor'],
+    roles: ['user'],
   },
 ];
-
-const CATEGORIES: Array<{
-  name: string;
-  slug: string;
-  description: string;
-  icon: string;
-  sortOrder: number;
-}> = [
-  {
-    name: 'Quantitative Aptitude',
-    slug: 'quantitative',
-    description: 'Numbers, algebra, geometry and arithmetic.',
-    icon: 'calculator',
-    sortOrder: 1,
-  },
-  {
-    name: 'Logical Reasoning',
-    slug: 'logical-reasoning',
-    description: 'Patterns, puzzles, series and deductions.',
-    icon: 'puzzle',
-    sortOrder: 2,
-  },
-  {
-    name: 'Verbal Ability',
-    slug: 'verbal',
-    description: 'Grammar, vocabulary and comprehension.',
-    icon: 'book',
-    sortOrder: 3,
-  },
-  {
-    name: 'Data Interpretation',
-    slug: 'data-interpretation',
-    description: 'Charts, tables and caselets.',
-    icon: 'chart',
-    sortOrder: 4,
-  },
-  {
-    name: 'Visual Reasoning',
-    slug: 'visual',
-    description: 'Spatial and figure-based reasoning.',
-    icon: 'shapes',
-    sortOrder: 5,
-  },
-  {
-    name: 'Game-Based Aptitude',
-    slug: 'game-based',
-    description: 'Interactive, game-style assessments.',
-    icon: 'gamepad',
-    sortOrder: 6,
-  },
-  {
-    name: 'Cryptarithmetic',
-    slug: 'cryptarithmetic',
-    description: 'Alphametic and coded-arithmetic puzzles.',
-    icon: 'key',
-    sortOrder: 7,
-  },
-];
-
-const TOPICS: Array<{ categorySlug: string; name: string; slug: string; description: string }> = [
-  {
-    categorySlug: 'quantitative',
-    name: 'Time and Work',
-    slug: 'time-and-work',
-    description: 'Work rates and combined effort.',
-  },
-  {
-    categorySlug: 'quantitative',
-    name: 'Percentages',
-    slug: 'percentages',
-    description: 'Percent change, mixtures and successive variation.',
-  },
-  {
-    categorySlug: 'logical-reasoning',
-    name: 'Number Series',
-    slug: 'number-series',
-    description: 'Find the missing term.',
-  },
-  {
-    categorySlug: 'logical-reasoning',
-    name: 'Blood Relations',
-    slug: 'blood-relations',
-    description: 'Family-tree deductions.',
-  },
-  {
-    categorySlug: 'verbal',
-    name: 'Reading Comprehension',
-    slug: 'reading-comprehension',
-    description: 'Passage-based questions.',
-  },
-  {
-    categorySlug: 'data-interpretation',
-    name: 'Bar Charts',
-    slug: 'bar-charts',
-    description: 'Reading and computing from bar charts.',
-  },
-  {
-    categorySlug: 'cryptarithmetic',
-    name: 'Alphametics',
-    slug: 'alphametics',
-    description: 'SEND + MORE style puzzles.',
-  },
-  {
-    categorySlug: 'visual',
-    name: 'Figure Series',
-    slug: 'figure-series',
-    description: 'Spot the transformation between figures.',
-  },
-  {
-    categorySlug: 'game-based',
-    name: 'Resource Games',
-    slug: 'resource-games',
-    description: 'Strategy and allocation style games.',
-  },
-  {
-    categorySlug: 'quantitative',
-    name: 'Speed and Distance',
-    slug: 'speed-and-distance',
-    description: 'Relative speed, trains and boats.',
-  },
-];
-
-const SUBTOPICS: Array<{ topicSlug: string; name: string; slug: string }> = [
-  { topicSlug: 'time-and-work', name: 'Pipes and Cisterns', slug: 'pipes-and-cisterns' },
-  { topicSlug: 'number-series', name: 'Missing Term', slug: 'missing-term' },
-];
-
-const EXAM_TAGS: Array<{ name: string; slug: string; description: string }> = [
-  { name: 'SSC', slug: 'ssc', description: 'Staff Selection Commission exams.' },
-  { name: 'Banking', slug: 'banking', description: 'IBPS, SBI and RBI exams.' },
-  { name: 'TCS NQT', slug: 'tcs-nqt', description: 'TCS National Qualifier Test.' },
-  { name: 'GATE', slug: 'gate', description: 'Graduate Aptitude Test in Engineering.' },
-  { name: 'Placement', slug: 'placement', description: 'Campus placement drives.' },
-  { name: 'Railway', slug: 'railway', description: 'RRB NTPC, Group D and related exams.' },
-  { name: 'UPSC', slug: 'upsc', description: 'Civil Services aptitude (CSAT).' },
-  { name: 'General', slug: 'general', description: 'Topic practice without an exam context.' },
-];
-
-async function seedRoles(): Promise<void> {
-  for (const role of ROLES) {
-    await prisma.role.upsert({
-      where: { name: role.name },
-      update: { description: role.description },
-      create: role,
-    });
-  }
-  for (const permission of PERMISSIONS) {
-    await prisma.permission.upsert({
-      where: { action_resource: { action: permission.action, resource: permission.resource } },
-      update: { description: permission.description },
-      create: permission,
-    });
-  }
-  for (const grant of GRANTS) {
-    const role = await prisma.role.findUniqueOrThrow({ where: { name: grant.role } });
-    const permission = await prisma.permission.findUniqueOrThrow({
-      where: { action_resource: { action: grant.action, resource: grant.resource } },
-    });
-    await prisma.rolePermission.upsert({
-      where: { roleId_permissionId: { roleId: role.id, permissionId: permission.id } },
-      update: {},
-      create: { roleId: role.id, permissionId: permission.id },
-    });
-  }
-}
 
 async function seedUsers(): Promise<void> {
   const passwordHash = devPasswordHash();
@@ -302,53 +109,6 @@ async function seedUsers(): Promise<void> {
       where: { ownerId_name: { ownerId: user.id, name: 'Favorites' } },
       update: { isDefault: true, defaultSlot: user.id },
       create: { ownerId: user.id, name: 'Favorites', isDefault: true, defaultSlot: user.id },
-    });
-  }
-}
-
-async function seedContentTaxonomy(): Promise<void> {
-  for (const category of CATEGORIES) {
-    await prisma.category.upsert({
-      where: { slug: category.slug },
-      update: {
-        name: category.name,
-        description: category.description,
-        icon: category.icon,
-        sortOrder: category.sortOrder,
-        isActive: true,
-      },
-      create: category,
-    });
-  }
-  for (const topic of TOPICS) {
-    const category = await prisma.category.findUniqueOrThrow({
-      where: { slug: topic.categorySlug },
-    });
-    await prisma.topic.upsert({
-      where: { categoryId_slug: { categoryId: category.id, slug: topic.slug } },
-      update: { name: topic.name, description: topic.description, isActive: true },
-      create: {
-        categoryId: category.id,
-        name: topic.name,
-        slug: topic.slug,
-        description: topic.description,
-      },
-    });
-  }
-  // Subtopics key off (topicId, slug); look topics up by slug first.
-  for (const subtopic of SUBTOPICS) {
-    const topic = await prisma.topic.findFirstOrThrow({ where: { slug: subtopic.topicSlug } });
-    await prisma.subtopic.upsert({
-      where: { topicId_slug: { topicId: topic.id, slug: subtopic.slug } },
-      update: { name: subtopic.name, isActive: true },
-      create: { topicId: topic.id, name: subtopic.name, slug: subtopic.slug },
-    });
-  }
-  for (const tag of EXAM_TAGS) {
-    await prisma.examTag.upsert({
-      where: { slug: tag.slug },
-      update: { name: tag.name, description: tag.description, isActive: true },
-      create: tag,
     });
   }
 }
@@ -423,7 +183,7 @@ const PROBLEMS: SeedProblem[] = [
     statement:
       'A can complete a job in 12 days and B can complete it in 18 days. Working together, in how many days will they finish the job?',
     difficulty: 'EASY',
-    rating: 1080,
+    rating: 1100,
     explanation:
       'Combined rate = 1/12 + 1/18 = 5/36 of the job per day, so the job takes 36/5 = 7.2 days.',
     shortcut: 'Use the product-over-sum rule: (12 × 18) / (12 + 18).',
@@ -444,7 +204,7 @@ const PROBLEMS: SeedProblem[] = [
     statement:
       'A pipe fills a tank in 6 hours. A leak empties it in 12 hours. With both open, how long does the tank take to fill?',
     difficulty: 'MEDIUM',
-    rating: 1320,
+    rating: 1300,
     explanation: 'Net rate = 1/6 − 1/12 = 1/12 of the tank per hour, so it fills in 12 hours.',
     categorySlug: 'quantitative',
     topicSlug: 'time-and-work',
@@ -462,7 +222,7 @@ const PROBLEMS: SeedProblem[] = [
     statement:
       'A shirt is marked at ₹2,000. Two successive discounts of 10% and 20% are applied. What is the final selling price?',
     difficulty: 'EASY',
-    rating: 1010,
+    rating: 1000,
     explanation: 'Final price = 2000 × 0.9 × 0.8 = ₹1,440.',
     shortcut: 'Successive discounts multiply: net factor 0.9 × 0.8 = 0.72.',
     source: 'ApteeZ seed',
@@ -482,7 +242,7 @@ const PROBLEMS: SeedProblem[] = [
     statement:
       'The population of a town increases by 10% in the first year and decreases by 10% in the second. What is the net change?',
     difficulty: 'MEDIUM',
-    rating: 1240,
+    rating: 1200,
     explanation: 'Net factor = 1.1 × 0.9 = 0.99, a net decrease of 1%.',
     categorySlug: 'quantitative',
     topicSlug: 'percentages',
@@ -498,7 +258,7 @@ const PROBLEMS: SeedProblem[] = [
     title: 'Number Series: find the missing term',
     statement: 'Find the next term in the series: 2, 6, 12, 20, 30, ?',
     difficulty: 'EASY',
-    rating: 980,
+    rating: 1000,
     explanation: 'Differences are 4, 6, 8, 10, so the next difference is 12 and the term is 42.',
     shortcut: 'Terms are n(n + 1): 42 = 6 × 7.',
     categorySlug: 'logical-reasoning',
@@ -510,7 +270,7 @@ const PROBLEMS: SeedProblem[] = [
     title: 'Number Series: missing term in a geometric series',
     statement: 'Find the missing term: 3, 9, 27, ?, 243.',
     difficulty: 'EASY',
-    rating: 940,
+    rating: 1000,
     explanation: 'Each term is multiplied by 3, so the missing term is 81.',
     categorySlug: 'logical-reasoning',
     topicSlug: 'number-series',
@@ -522,7 +282,7 @@ const PROBLEMS: SeedProblem[] = [
     statement:
       'Pointing to a photograph, Ravi said, "She is the daughter of my grandfather\u2019s only son." How is the girl related to Ravi?',
     difficulty: 'MEDIUM',
-    rating: 1290,
+    rating: 1300,
     explanation:
       'My grandfather\u2019s only son is Ravi\u2019s father, so the girl is Ravi\u2019s sister.',
     categorySlug: 'logical-reasoning',
@@ -540,7 +300,7 @@ const PROBLEMS: SeedProblem[] = [
     statement:
       'A is the father of B. B is the sister of C. C is the son of D. How is D related to A?',
     difficulty: 'HARD',
-    rating: 1560,
+    rating: 1600,
     explanation:
       'C\u2019s parent D is also B\u2019s parent, and A is B\u2019s father — so D is A\u2019s wife.',
     categorySlug: 'logical-reasoning',
@@ -558,7 +318,7 @@ const PROBLEMS: SeedProblem[] = [
     statement:
       'Read the passage: "Despite heavy investment in automation, the factory\u2019s output barely changed, because the new machines needed frequent manual recalibration." Which conclusion is best supported?',
     difficulty: 'MEDIUM',
-    rating: 1210,
+    rating: 1200,
     explanation:
       'The passage attributes the flat output to frequent manual recalibration, so automation alone did not deliver the expected gain.',
     categorySlug: 'verbal',
@@ -588,7 +348,7 @@ const PROBLEMS: SeedProblem[] = [
     statement:
       'A table lists monthly expenses of ₹1,200, ₹1,500, ₹900 and ₹1,400. What is the average monthly expense?',
     difficulty: 'EASY',
-    rating: 990,
+    rating: 1000,
     explanation: 'Sum = 5,000 over 4 months, so the average is ₹1,250.',
     categorySlug: 'data-interpretation',
     topicSlug: 'bar-charts',
@@ -605,7 +365,7 @@ const PROBLEMS: SeedProblem[] = [
     statement: 'Study the figure sequence and identify the next shape in the pattern.',
     contentMode: 'TEXT_AND_IMAGE',
     difficulty: 'MEDIUM',
-    rating: 1340,
+    rating: 1300,
     explanation: 'The figure rotates 90° clockwise and gains one side each step.',
     categorySlug: 'visual',
     topicSlug: 'figure-series',
@@ -628,7 +388,7 @@ const PROBLEMS: SeedProblem[] = [
     title: 'Visual Reasoning: odd figure out (image only)',
     contentMode: 'IMAGE_ONLY',
     difficulty: 'HARD',
-    rating: 1620,
+    rating: 1600,
     explanation: 'Every figure except one is symmetric about a vertical axis.',
     categorySlug: 'visual',
     topicSlug: 'figure-series',
@@ -667,7 +427,7 @@ const PROBLEMS: SeedProblem[] = [
     statement:
       'In the allocation game, you have three moves to distribute 10 tokens between two bins. Which opening move maximises the guaranteed final total?',
     difficulty: 'MEDIUM',
-    rating: 1420,
+    rating: 1400,
     explanation:
       'Opening with an even split keeps both future response trees symmetric and guarantees the higher floor.',
     categorySlug: 'game-based',
@@ -1505,7 +1265,11 @@ async function seedLearning(): Promise<void> {
 
         await prisma.learningLessonProblem.deleteMany({ where: { lessonId: lesson.id } });
         const anchor = seedTopic.topicSlug
-          ? await prisma.topic.findUnique({ where: { slug: seedTopic.topicSlug } })
+          ? await prisma.topic.findUnique({
+              where: {
+                categoryId_slug: { categoryId: path.categoryId, slug: seedTopic.topicSlug },
+              },
+            })
           : undefined;
         const problems = anchor
           ? await prisma.problem.findMany({
@@ -1550,9 +1314,19 @@ async function seedLearning(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  await seedRoles();
+  // Dev seed must never run against production: it creates fake users and
+  // content. Production uses `db:bootstrap` (structural data only).
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_SEED !== 'true') {
+    throw new Error(
+      'Refusing to run the development seed with NODE_ENV=production. ' +
+        'Use `db:bootstrap` for production structural data instead.',
+    );
+  }
+  await seedRbac(prisma);
   await seedUsers();
-  await seedContentTaxonomy();
+  await seedTaxonomy(prisma);
+  await seedRewards(prisma);
+  await seedOrganizations(prisma);
   seedLocalAssets();
   await seedProblems();
   await seedLearning();
@@ -1560,7 +1334,8 @@ async function main(): Promise<void> {
   process.stdout.write(
     `Seeded ${ROLES.length} roles, ${PERMISSIONS.length} permissions, ${DEV_USERS.length} dev users, ` +
       `${CATEGORIES.length} categories, ${TOPICS.length} topics, ${SUBTOPICS.length} subtopics, ` +
-      `${EXAM_TAGS.length} exam tags, ${PROBLEMS.length} problems, ${learning} learning lessons.\n`,
+      `${EXAM_TAGS.length} exam tags, ${PROBLEMS.length} problems, ${learning} learning lessons, ` +
+      `${REWARD_RULES.length} reward rules, ${ACHIEVEMENTS.length} achievements.\n`,
   );
 }
 

@@ -1,6 +1,7 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable } from '@nestjs/common';
 import type { Queue } from 'bullmq';
+import { getRequestId } from '../common/context/request-context';
 import { AppLogger } from '../common/logger/app-logger';
 import {
   CHALLENGE_JOBS,
@@ -74,8 +75,9 @@ export class ChallengeQueueService {
         {
           repeat: { every: intervalMs },
           jobId: schedulerId,
+          // Successful sweeps are noise; failed ones keep the global 24h
+          // retention so on-call can inspect them.
           removeOnComplete: true,
-          removeOnFail: true,
         },
       );
     } catch (error) {
@@ -93,7 +95,9 @@ export class ChallengeQueueService {
     jobId: string,
   ): Promise<void> {
     try {
-      await this.queue.add(name, payload, { delay, jobId });
+      // Trace challenge lifecycle jobs back to the originating request.
+      const requestId = getRequestId();
+      await this.queue.add(name, requestId ? { ...payload, requestId } : payload, { delay, jobId });
     } catch (error) {
       // A failed enqueue must never crash the request path: the synchronous
       // live tick still drives state, and the sweep re-schedules leftovers.

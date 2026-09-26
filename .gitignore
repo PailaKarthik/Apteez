@@ -12,6 +12,8 @@ out/
 # Prisma
 *.db
 *.db-journal
+# Generated Prisma client (built via db:generate, shipped via package files)
+packages/database/generated/
 
 # Local runtime data (e.g. local storage provider)
 .data/
@@ -37,6 +39,10 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# Keys and certificates (never commit)
+*.pem
+*.key
 
 # npm / pnpm
 .pnpm-debug.log*

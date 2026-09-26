@@ -5,6 +5,8 @@ import type { CookieOptions, Request, Response } from 'express';
 import {
   loginSchema,
   registerSchema,
+  emailOtpVerifySchema,
+  type EmailOtpVerifyInput,
   type LoginInput,
   type RegisterInput,
 } from '@apteez/validation';
@@ -14,7 +16,11 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import type { Env } from '../../config/env';
 import { AuthService, type RequestMeta } from './auth.service';
 import { GoogleOAuthService } from './google-oauth.service';
-import { AuthRequiredError } from './auth.errors';
+import {
+  AuthRequiredError,
+  InvalidOAuthError,
+  OAuthNotConfiguredError,
+} from './auth.errors';
 import { extractSessionToken } from '../../common/guards/session-auth.guard';
 
 function requestMeta(req: Request): RequestMeta {
@@ -40,10 +46,17 @@ export class AuthController {
   ) {}
 
   private cookieOptions(maxAgeSeconds: number): CookieOptions {
+    const isProduction = this.config.get('NODE_ENV', { infer: true }) === 'production';
     return {
       httpOnly: true,
-      secure: this.config.get('NODE_ENV', { infer: true }) === 'production',
-      sameSite: 'lax',
+      // Production web + API live on different origins (Vercel + Render):
+      // SameSite=None + Secure is REQUIRED or the browser stores the session
+      // cookie on the API response but never sends it on subsequent
+      // cross-site fetch calls — login looks successful then /auth/me 401s
+      // ("Checking your session…" then failure). Local dev stays Lax so
+      // plain-http localhost works without Secure.
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
       path: '/',
       maxAge: maxAgeSeconds * 1000,
     };
@@ -54,7 +67,7 @@ export class AuthController {
   }
 
   @Public()
-  @Throttle({ auth: {} })
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('register')
   @HttpCode(201)
   async register(
@@ -64,11 +77,16 @@ export class AuthController {
   ) {
     const session = await this.auth.register(body, requestMeta(req));
     res.cookie(this.cookieName(), session.token, this.cookieOptions(this.sessionTtl()));
-    return { user: session.user };
+    // Best-effort welcome OTP: signup succeeds even when mail is unconfigured.
+    const { sent } = await this.auth.sendWelcomeOtp(session.user.id);
+    return {
+      user: session.user,
+      emailVerification: { required: !session.user.emailVerified, sent },
+    };
   }
 
   @Public()
-  @Throttle({ auth: {} })
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('login')
   @HttpCode(200)
   async login(
@@ -107,16 +125,50 @@ export class AuthController {
     return this.auth.getMe(user.id, token);
   }
 
-  @Public()
-  @Throttle({ auth: {} })
-  @Get('google')
-  async googleStart(@Query('next') next: string | undefined, @Res() res: Response): Promise<void> {
-    const { url } = await this.oauth.begin(next);
-    res.redirect(url);
+  /**
+   * Email OTP verification (authed caller only — no enumeration oracle).
+   * Tight per-route ceilings: codes are cheap to request, expensive to guess.
+   */
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('email/verify-request')
+  @HttpCode(200)
+  async requestEmailOtp(@CurrentUser() user?: RequestUser) {
+    if (!user) {
+      throw new AuthRequiredError('Sign in to verify your email.');
+    }
+    return this.auth.requestEmailOtp(user.id);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('email/verify')
+  @HttpCode(200)
+  async verifyEmailOtp(
+    @Body(new ZodValidationPipe(emailOtpVerifySchema)) body: EmailOtpVerifyInput,
+    @CurrentUser() user?: RequestUser,
+  ) {
+    if (!user) {
+      throw new AuthRequiredError('Sign in to verify your email.');
+    }
+    // Return the fresh profile so clients flip to verified without refetch.
+    return this.auth.verifyEmailOtp(user.id, body.code);
   }
 
   @Public()
-  @Throttle({ auth: {} })
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Get('google')
+  async googleStart(@Query('next') next: string | undefined, @Res() res: Response): Promise<void> {
+    try {
+      const { url } = await this.oauth.begin(next);
+      res.redirect(url);
+    } catch {
+      // Browser-navigated route: never leak a JSON 500 — send the caller
+      // back to login with a code the form renders inline.
+      res.redirect(`${this.appUrl()}/login?oauthError=unavailable`);
+    }
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Get('google/callback')
   async googleCallback(
     @Query('code') code: string | undefined,
@@ -124,10 +176,29 @@ export class AuthController {
     @Req() req: Request,
     @Res() res: Response,
   ): Promise<void> {
-    const result = await this.oauth.callback(code, state, requestMeta(req));
-    res.cookie(this.cookieName(), result.token, this.cookieOptions(this.sessionTtl()));
-    const appUrl = this.config.get('APP_URL', { infer: true }).replace(/\/$/, '');
-    res.redirect(`${appUrl}${result.next}`);
+    try {
+      const result = await this.oauth.callback(code, state, requestMeta(req));
+      res.cookie(this.cookieName(), result.token, this.cookieOptions(this.sessionTtl()));
+      res.redirect(`${this.appUrl()}${result.next}`);
+    } catch (error) {
+      // Browser-navigated route: NEVER return a JSON 500 page. Every failure
+      // lands back on login with an inline message; InvalidOAuthError carries
+      // a stage code (expired|token|userinfo|provision) so the failure is
+      // self-diagnosing. Details stay server-side in logs.
+      if (error instanceof OAuthNotConfiguredError) {
+        res.redirect(`${this.appUrl()}/login?oauthError=unavailable`);
+        return;
+      }
+      if (error instanceof InvalidOAuthError) {
+        res.redirect(`${this.appUrl()}/login?oauthError=failed&oauthReason=${error.reason}`);
+        return;
+      }
+      res.redirect(`${this.appUrl()}/login?oauthError=failed`);
+    }
+  }
+
+  private appUrl(): string {
+    return this.config.get('APP_URL', { infer: true }).replace(/\/$/, '');
   }
 
   private sessionTtl(): number {

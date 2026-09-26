@@ -1,6 +1,6 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { recentSubmissionsQuerySchema, type RecentSubmissionsQuery } from '@apteez/validation';
-import type { CursorPage, RecentSubmissionDto } from '@apteez/types';
+import type { OffsetPage, RecentSubmissionDto } from '@apteez/types';
 import { CurrentUser, type RequestUser } from '../../common/decorators/current-user.decorator';
 import { AuthRequiredError } from '../auth/auth.errors';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -15,7 +15,7 @@ export class SubmissionsController {
   async recent(
     @Query(new ZodValidationPipe(recentSubmissionsQuerySchema)) query: RecentSubmissionsQuery,
     @CurrentUser() user?: RequestUser,
-  ): Promise<CursorPage<RecentSubmissionDto>> {
+  ): Promise<OffsetPage<RecentSubmissionDto>> {
     if (!user) {
       throw new AuthRequiredError('Sign in to view your practice history.');
     }

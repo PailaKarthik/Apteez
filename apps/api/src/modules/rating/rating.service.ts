@@ -129,7 +129,14 @@ export class RatingService {
     });
   }
 
-  /** Compute both sides then persist them atomically. */
+  /**
+   * Compute both sides then persist them. Deliberately NOT an interactive
+   * `$transaction`: DATABASE_URL is the Neon PgBouncer pooler, where those
+   * die with P2028 — which is exactly how ratings got stuck FAILED. Instead
+   * both sides are independent single-statement writes (fired together for
+   * one round trip) with exactly-once enforced per side by the conditional
+   * update + history unique inside `applyRating`.
+   */
   private async applyRatings(challenge: ChallengeForRating): Promise<void> {
     const p1Score = challenge.player1Score ?? 0;
     const p2Score = challenge.player2Score ?? 0;
@@ -141,73 +148,65 @@ export class RatingService {
       outcome === 'DRAW' ? 'DRAW' : outcome === 'PLAYER2_WIN' ? 'WIN' : 'LOSS';
     const rawOutcome = outcome as RatingSide['outcome'];
 
-    await this.prisma.$transaction(async (tx) => {
-      const p1 = await this.repo.ensureRating(
-        tx,
-        challenge.player1Id,
-        challenge.domainSlug,
-        challenge.categoryId,
-      );
-      const p2 = await this.repo.ensureRating(
-        tx,
-        challenge.player2Id,
-        challenge.domainSlug,
-        challenge.categoryId,
-      );
+    const [p1, p2] = await Promise.all([
+      this.repo.ensureRating(challenge.player1Id, challenge.domainSlug, challenge.categoryId),
+      this.repo.ensureRating(challenge.player2Id, challenge.domainSlug, challenge.categoryId),
+    ]);
 
-      const p1Calc = this.calculator.calculate({
-        ratingBefore: p1.rating,
-        opponentRatingBefore: p2.rating,
-        outcome: p1Result,
+    const p1Calc = this.calculator.calculate({
+      ratingBefore: p1.rating,
+      opponentRatingBefore: p2.rating,
+      outcome: p1Result,
+      score: p1Score,
+      opponentScore: p2Score,
+    });
+    const p2Calc = this.calculator.calculate({
+      ratingBefore: p2.rating,
+      opponentRatingBefore: p1.rating,
+      outcome: p2Result,
+      score: p2Score,
+      opponentScore: p1Score,
+    });
+
+    const sides: RatingSide[] = [
+      {
+        userId: challenge.player1Id,
+        opponentId: challenge.player2Id,
+        ratingBefore: p1Calc.ratingBefore,
+        ratingAfter: p1Calc.ratingAfter,
+        ratingChange: p1Calc.ratingChange,
+        opponentRatingBefore: p2Calc.ratingBefore,
+        opponentRatingAfter: p2Calc.ratingAfter,
+        result: p1Result,
+        outcome: rawOutcome,
         score: p1Score,
         opponentScore: p2Score,
-      });
-      const p2Calc = this.calculator.calculate({
-        ratingBefore: p2.rating,
-        opponentRatingBefore: p1.rating,
-        outcome: p2Result,
+      },
+      {
+        userId: challenge.player2Id,
+        opponentId: challenge.player1Id,
+        ratingBefore: p2Calc.ratingBefore,
+        ratingAfter: p2Calc.ratingAfter,
+        ratingChange: p2Calc.ratingChange,
+        opponentRatingBefore: p1Calc.ratingBefore,
+        opponentRatingAfter: p1Calc.ratingAfter,
+        result: p2Result,
+        outcome: rawOutcome,
         score: p2Score,
         opponentScore: p1Score,
-      });
+      },
+    ];
 
-      const sides: RatingSide[] = [
-        {
-          userId: challenge.player1Id,
-          opponentId: challenge.player2Id,
-          ratingBefore: p1Calc.ratingBefore,
-          ratingAfter: p1Calc.ratingAfter,
-          ratingChange: p1Calc.ratingChange,
-          opponentRatingBefore: p2Calc.ratingBefore,
-          opponentRatingAfter: p2Calc.ratingAfter,
-          result: p1Result,
-          outcome: rawOutcome,
-          score: p1Score,
-          opponentScore: p2Score,
-        },
-        {
-          userId: challenge.player2Id,
-          opponentId: challenge.player1Id,
-          ratingBefore: p2Calc.ratingBefore,
-          ratingAfter: p2Calc.ratingAfter,
-          ratingChange: p2Calc.ratingChange,
-          opponentRatingBefore: p1Calc.ratingBefore,
-          opponentRatingAfter: p1Calc.ratingAfter,
-          result: p2Result,
-          outcome: rawOutcome,
-          score: p2Score,
-          opponentScore: p1Score,
-        },
-      ];
-
-      for (const side of sides) {
-        await this.repo.applyRating(tx, {
+    await Promise.all(
+      sides.map((side) =>
+        this.repo.applyRating({
           challengeId: challenge.id,
           domainSlug: challenge.domainSlug,
           categoryId: challenge.categoryId,
           side,
-        });
-      }
-    });
+        }),
+      ),
+    );
   }
 
   /** Rating change per player for a finalized challenge, if already applied. */
@@ -217,6 +216,21 @@ export class RatingService {
       select: { userId: true, ratingChange: true },
     });
     return new Map(rows.map((row) => [row.userId, row.ratingChange]));
+  }
+
+  /**
+   * Batched variant for history pages: one query for the whole page, keyed
+   * by challenge id, scoped to a single user.
+   */
+  async changesForMany(challengeIds: string[], userId: string): Promise<Map<string, number>> {
+    if (challengeIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.prisma.challengeRatingHistory.findMany({
+      where: { challengeId: { in: challengeIds }, userId },
+      select: { challengeId: true, ratingChange: true },
+    });
+    return new Map(rows.map((row) => [row.challengeId, row.ratingChange]));
   }
 
   async overview(userId: string, domainSlug?: string): Promise<RatingsOverviewDto> {
@@ -285,7 +299,8 @@ export class RatingService {
     const rows = await this.prisma.challengeRating.findMany({
       where: {
         domainSlug: category.slug,
-        ...(institution ? { user: { institution } } : {}),
+        // The house bot plays solo matches only: never ranked.
+        user: { isSystem: false, ...(institution ? { institution } : {}) },
       },
       orderBy: [{ rating: 'desc' }, { userId: 'asc' }],
       take: limit,

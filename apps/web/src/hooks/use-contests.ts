@@ -1,32 +1,38 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   ContestDetailDto,
+  ContestDraftDto,
   ContestLeaderboardEntryDto,
+  ContestManageDto,
   ContestResultDto,
   ContestSessionDto,
   ContestSubmitPreviewDto,
   ContestSummaryDto,
   ContestUpsolveDto,
+  PaginatedData,
 } from '@apteez/types';
-import type { ContestLeaderboardQuery, ContestListQuery } from '@apteez/validation';
-import { ApiError, apiFetch } from '@/lib/api-client';
+import type {
+  ContestCreateInput,
+  ContestListQuery,
+  OrganizerContestPatchInput,
+} from '@apteez/validation';
+import { apiFetch } from '@/lib/api-client';
+import { invalidateActivityQueries } from '@/lib/invalidate-activity';
 
-/** Discovery list; phase/difficulty filters map straight to API params. */
+/** Discovery list; filters map straight to API params. */
 export function contestsListPath(query: Partial<ContestListQuery> = {}): string {
   const params = new URLSearchParams();
-  if (query.phase) {
-    params.set('phase', query.phase);
-  }
-  if (query.difficulty) {
-    params.set('difficulty', query.difficulty);
-  }
-  if (query.page) {
-    params.set('page', String(query.page));
-  }
-  if (query.pageSize) {
-    params.set('pageSize', String(query.pageSize));
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+    const text = String(value);
+    if (text === '') {
+      continue;
+    }
+    params.set(key, text);
   }
   const qs = params.toString();
   return `/contests${qs ? `?${qs}` : ''}`;
@@ -35,12 +41,9 @@ export function contestsListPath(query: Partial<ContestListQuery> = {}): string 
 export function useContests(query: Partial<ContestListQuery> = {}) {
   return useQuery({
     queryKey: ['contests', 'list', query],
-    queryFn: () =>
-      apiFetch<{
-        items: ContestSummaryDto[];
-        meta: { page: number; pageSize: number; total: number; totalPages: number };
-      }>(contestsListPath(query)),
+    queryFn: () => apiFetch<PaginatedData<ContestSummaryDto>>(contestsListPath(query)),
     staleTime: 10_000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -53,160 +56,279 @@ export function useContest(contestId: string | undefined) {
   });
 }
 
-export function useContestSession(contestId: string | undefined) {
+export function useContestLeaderboard(
+  contestId: string | undefined,
+  enabled = true,
+  opts: { page?: number; pageSize?: number; live?: boolean } = {},
+) {
+  const page = opts.page ?? 1;
+  const pageSize = opts.pageSize ?? 50;
+  return useQuery({
+    queryKey: ['contests', 'leaderboard', contestId, page, pageSize],
+    queryFn: () =>
+      apiFetch<PaginatedData<ContestLeaderboardEntryDto>>(
+        `/contests/${contestId}/leaderboard?page=${page}&pageSize=${pageSize}`,
+      ),
+    enabled: Boolean(contestId) && enabled,
+    staleTime: 10_000,
+    placeholderData: keepPreviousData,
+    refetchInterval: opts.live ? 10_000 : false,
+  });
+}
+
+export function useContestResult(contestId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['contests', 'result', contestId],
+    queryFn: () => apiFetch<ContestResultDto>(`/contests/${contestId}/result`),
+    enabled: Boolean(contestId) && enabled,
+    retry: 1,
+    staleTime: 10_000,
+  });
+}
+
+export function useContestUpsolve(contestId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['contests', 'upsolve', contestId],
+    queryFn: () => apiFetch<ContestUpsolveDto>(`/contests/${contestId}/upsolve`),
+    enabled: Boolean(contestId) && enabled,
+    retry: 1,
+    staleTime: 30_000,
+  });
+}
+
+export function useContestSession(contestId: string | undefined, live = false) {
   return useQuery({
     queryKey: ['contests', 'session', contestId],
     queryFn: () => apiFetch<ContestSessionDto>(`/contests/${contestId}/session`),
     enabled: Boolean(contestId),
-    // Recovery is the point of this endpoint: refetch on reconnect.
+    retry: 1,
+    // Live polling keeps the server clock (and auto-submit) honest while idle.
+    refetchInterval: live ? 5_000 : false,
+  });
+}
+
+export function useContestSubmitPreview(contestId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['contests', 'submit-preview', contestId],
+    queryFn: () => apiFetch<ContestSubmitPreviewDto>(`/contests/${contestId}/submit-preview`),
+    enabled: Boolean(contestId) && enabled,
     retry: 1,
   });
 }
 
-/** Enter the contest. Idempotent: re-entering restores the same session. */
-export function useStart(contestId: string | undefined) {
-  return useMutation({
-    mutationFn: () =>
-      apiFetch<ContestSessionDto>(`/contests/${contestId}/start`, { method: 'POST' }),
-  });
+function invalidateContest(
+  queryClient: ReturnType<typeof useQueryClient>,
+  contestId?: string,
+): void {
+  void queryClient.invalidateQueries({ queryKey: ['contests', 'list'] });
+  if (contestId) {
+    void queryClient.invalidateQueries({ queryKey: ['contests', 'detail', contestId] });
+    void queryClient.invalidateQueries({ queryKey: ['contests', 'session', contestId] });
+    void queryClient.invalidateQueries({ queryKey: ['contests', 'result', contestId] });
+    void queryClient.invalidateQueries({ queryKey: ['contests', 'leaderboard', contestId] });
+  }
 }
 
-export function useRegister(contestId: string | undefined) {
+export function useRegisterContest(contestId: string | undefined) {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () =>
       apiFetch<{ registered: boolean; status: string }>(`/contests/${contestId}/register`, {
         method: 'POST',
       }),
+    onSuccess: () => invalidateContest(queryClient, contestId),
   });
 }
 
-export function useUnregister(contestId: string | undefined) {
+export function useUnregisterContest(contestId: string | undefined) {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () =>
       apiFetch<{ registered: boolean }>(`/contests/${contestId}/register`, { method: 'DELETE' }),
+    onSuccess: () => invalidateContest(queryClient, contestId),
   });
 }
 
-export function useAnswer(contestId: string | undefined) {
+export function useStartContest(contestId: string | undefined) {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      questionId,
-      ...body
-    }: {
+    mutationFn: () =>
+      apiFetch<ContestSessionDto>(`/contests/${contestId}/start`, { method: 'POST' }),
+    onSuccess: () => invalidateContest(queryClient, contestId),
+  });
+}
+
+export function useAnswerContestQuestion(contestId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
       questionId: string;
       selectedOptionId: string;
       currentPosition?: number;
     }) =>
-      apiFetch<{ answeredCount: number; reviewCount: number }>(
-        `/contests/${contestId}/questions/${questionId}/answer`,
-        { method: 'POST', body },
+      apiFetch<{ saved: boolean; answeredCount: number; reviewCount: number }>(
+        `/contests/${contestId}/questions/${body.questionId}/answer`,
+        {
+          method: 'POST',
+          body: { selectedOptionId: body.selectedOptionId, currentPosition: body.currentPosition },
+        },
       ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['contests', 'session', contestId] });
+    },
   });
 }
 
-export function useReview(contestId: string | undefined) {
+export function useToggleContestReview(contestId: string | undefined) {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      questionId,
-      ...body
-    }: {
+    mutationFn: (body: {
       questionId: string;
       markedForReview: boolean;
       currentPosition?: number;
     }) =>
-      apiFetch<{ answeredCount: number; reviewCount: number }>(
-        `/contests/${contestId}/questions/${questionId}/review`,
-        { method: 'POST', body },
+      apiFetch<{ saved: boolean; answeredCount: number; reviewCount: number }>(
+        `/contests/${contestId}/questions/${body.questionId}/review`,
+        {
+          method: 'POST',
+          body: { markedForReview: body.markedForReview, currentPosition: body.currentPosition },
+        },
       ),
-  });
-}
-
-export function useSubmitPreview(contestId: string | undefined, enabled: boolean) {
-  return useQuery({
-    queryKey: ['contests', 'submit-preview', contestId],
-    queryFn: () => apiFetch<ContestSubmitPreviewDto>(`/contests/${contestId}/submit-preview`),
-    enabled: Boolean(contestId) && enabled,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['contests', 'session', contestId] });
+    },
   });
 }
 
 export function useSubmitContest(contestId: string | undefined) {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () =>
       apiFetch<ContestResultDto>(`/contests/${contestId}/submit`, { method: 'POST' }),
-  });
-}
-
-export function useContestResult(contestId: string | undefined) {
-  return useQuery({
-    queryKey: ['contests', 'result', contestId],
-    queryFn: () => apiFetch<ContestResultDto>(`/contests/${contestId}/result`),
-    enabled: Boolean(contestId),
-    // Finalization may lag a timer expiry slightly; poll briefly.
-    refetchInterval: (query) => (query.state.error ? false : 5_000),
-    retry: (failureCount, error) =>
-      error instanceof ApiError && error.status === 404 && failureCount < 4,
-  });
-}
-
-export function useContestLeaderboard(
-  contestId: string | undefined,
-  query: Partial<ContestLeaderboardQuery> = {},
-) {
-  return useQuery({
-    queryKey: ['contests', 'leaderboard', contestId, query],
-    queryFn: () =>
-      apiFetch<{
-        items: ContestLeaderboardEntryDto[];
-        meta: { page: number; pageSize: number; total: number; totalPages: number };
-      }>(
-        `/contests/${contestId}/leaderboard?page=${query.page ?? 1}&pageSize=${query.pageSize ?? 50}`,
-      ),
-    enabled: Boolean(contestId),
-    staleTime: 10_000,
-  });
-}
-
-export function useUpsolve(contestId: string | undefined) {
-  return useQuery({
-    queryKey: ['contests', 'upsolve', contestId],
-    queryFn: () => apiFetch<ContestUpsolveDto>(`/contests/${contestId}/upsolve`),
-    enabled: Boolean(contestId),
-  });
-}
-
-/** Best-effort integrity signals (tab hidden, blur, copy…); never blocks UI. */
-export function useReportContestEvent(contestId: string | undefined) {
-  return useMutation({
-    mutationFn: (body: { type: string; detail?: string }) =>
-      apiFetch<{ recorded: boolean }>(`/contests/${contestId}/events`, { method: 'POST', body }),
-    // A failed signal report must never disturb the contest flow.
-    onError: () => undefined,
+    onSuccess: () => {
+      invalidateContest(queryClient, contestId);
+      invalidateActivityQueries(queryClient);
+    },
   });
 }
 
 /**
- * Central cache maintenance for the contest flow. Registration changes both
- * the list cards and the detail page, so both families are invalidated.
+ * Integrity telemetry (fullscreen exits, tab hides, copy/paste). Fire-and-
+ * forget by design: reporting must never block answering, and the server
+ * throttles it. Stored off the result path.
  */
-export function useContestCacheSync(contestId: string | undefined): {
-  syncRegistered: (detail: ContestDetailDto) => void;
-  syncFinalized: () => void;
-  syncUnregistered: () => void;
-} {
+export function useReportContestEvent(contestId: string | undefined) {
+  return useMutation({
+    mutationFn: (body: { type: string; detail?: string }) =>
+      apiFetch<{ recorded: boolean }>(`/contests/${contestId}/events`, {
+        method: 'POST',
+        body,
+      }),
+    retry: false,
+  });
+}
+
+// ─── Organizer management ───────────────────────────────────────────────────
+
+function invalidateManage(
+  queryClient: ReturnType<typeof useQueryClient>,
+  contestId?: string,
+): void {
+  void queryClient.invalidateQueries({ queryKey: ['contests', 'manage', contestId] });
+  void queryClient.invalidateQueries({ queryKey: ['contests', 'list'] });
+  void queryClient.invalidateQueries({ queryKey: ['contests', 'drafts'] });
+  if (contestId) {
+    void queryClient.invalidateQueries({ queryKey: ['contests', 'detail', contestId] });
+  }
+}
+
+/** Step 1: create the DRAFT format (question count + length first). */
+export function useCreateContest() {
   const queryClient = useQueryClient();
-  const syncRegistered = (detail: ContestDetailDto): void => {
-    queryClient.setQueryData(['contests', 'detail', contestId], detail);
-    void queryClient.invalidateQueries({ queryKey: ['contests', 'list'] });
-  };
-  const syncFinalized = (): void => {
-    void queryClient.invalidateQueries({ queryKey: ['contests', 'detail', contestId] });
-    void queryClient.invalidateQueries({ queryKey: ['contests', 'session', contestId] });
-    void queryClient.invalidateQueries({ queryKey: ['contests', 'result', contestId] });
-    void queryClient.invalidateQueries({ queryKey: ['contests', 'leaderboard', contestId] });
-  };
-  const syncUnregistered = (): void => {
-    void queryClient.invalidateQueries({ queryKey: ['contests', 'detail', contestId] });
-    void queryClient.invalidateQueries({ queryKey: ['contests', 'list'] });
-  };
-  return { syncRegistered, syncFinalized, syncUnregistered };
+  return useMutation({
+    mutationFn: (body: ContestCreateInput) =>
+      apiFetch<ContestManageDto>('/contests', { method: 'POST', body }),
+    onSuccess: (data) => invalidateManage(queryClient, data.id),
+  });
+}
+
+/** Resume list: unfinished DRAFT setups the caller may manage. */
+export function useContestDrafts(enabled = true) {
+  return useQuery({
+    queryKey: ['contests', 'drafts'],
+    queryFn: () => apiFetch<ContestDraftDto[]>('/contests/drafts'),
+    enabled,
+    retry: 1,
+    staleTime: 10_000,
+  });
+}
+
+export function useContestManage(contestId: string | undefined) {
+  return useQuery({
+    queryKey: ['contests', 'manage', contestId],
+    queryFn: () => apiFetch<ContestManageDto>(`/contests/${contestId}/manage`),
+    enabled: Boolean(contestId),
+    retry: 1,
+    staleTime: 10_000,
+  });
+}
+
+export function useUpdateContestDraft(contestId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: OrganizerContestPatchInput) =>
+      apiFetch<ContestManageDto>(`/contests/${contestId}`, { method: 'PATCH', body }),
+    onSuccess: (data) => invalidateManage(queryClient, data.id),
+  });
+}
+
+/** Step 2: attach one published problem (positions append in order). */
+export function useAddContestQuestion(contestId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { problemId: string }) =>
+      apiFetch<ContestManageDto>(`/contests/${contestId}/questions`, {
+        method: 'POST',
+        body,
+      }),
+    onSuccess: (data) => invalidateManage(queryClient, data.id),
+  });
+}
+
+export function useRemoveContestQuestion(contestId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (questionId: string) =>
+      apiFetch<ContestManageDto>(`/contests/${contestId}/questions/${questionId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: (data) => invalidateManage(queryClient, data.id),
+  });
+}
+
+/** Manual repair for stuck ratings (ENDED contests, organizer/admin). */
+export function useRetryContestRatings(contestId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<{ ranked: number; ratingsApplied: boolean; ratingStatus: string }>(
+        `/contests/${contestId}/ratings/retry`,
+        { method: 'POST' },
+      ),
+    onSuccess: (data) => {
+      invalidateManage(queryClient, contestId);
+      void queryClient.invalidateQueries({ queryKey: ['contests', 'result', contestId] });
+      void queryClient.invalidateQueries({ queryKey: ['contests', 'leaderboard', contestId] });
+      return data;
+    },
+  });
+}
+
+export function usePublishContest(contestId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<ContestManageDto>(`/contests/${contestId}/publish`, { method: 'POST' }),
+    onSuccess: (data) => invalidateManage(queryClient, data.id),
+  });
 }

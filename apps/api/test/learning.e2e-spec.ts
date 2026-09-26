@@ -35,7 +35,16 @@ describe('Learning (e2e)', () => {
     await app.init();
     prisma = app.get(PrismaService);
 
-    const category = await prisma.category.findUniqueOrThrow({ where: { slug: 'quantitative' } });
+    // Dedicated category: learning paths are 1:1 per category, so the spec
+    // must not attach to a seeded category (which already has a path).
+    const categorySlug = `learning-e2e-cat-${Date.now()}`;
+    const category = await prisma.category.create({
+      data: {
+        name: 'Learning e2e category',
+        slug: categorySlug,
+        description: 'Temporary category for the learning e2e spec.',
+      },
+    });
 
     pathSlug = `learning-e2e-path-${Date.now()}`;
     topicSlug = `learning-e2e-topic-${Date.now()}`;
@@ -102,8 +111,10 @@ describe('Learning (e2e)', () => {
       ],
     });
 
+    // problemId is globally unique per lesson: pick a published problem
+    // that seeded lessons have not already claimed.
     const publishedProblem = await prisma.problem.findFirstOrThrow({
-      where: { status: 'PUBLISHED', categoryId: category.id },
+      where: { status: 'PUBLISHED', learningLessons: { none: {} } },
     });
     const firstLesson = await prisma.learningLesson.findFirstOrThrow({
       where: { topicId: topic.id, slug: lessonSlug },
@@ -131,6 +142,7 @@ describe('Learning (e2e)', () => {
     await prisma.learningLesson.deleteMany({ where: { topic: { path: { slug: pathSlug } } } });
     await prisma.learningTopic.deleteMany({ where: { path: { slug: pathSlug } } });
     await prisma.learningPath.deleteMany({ where: { slug: pathSlug } });
+    await prisma.category.deleteMany({ where: { slug: { startsWith: 'learning-e2e-cat-' } } });
     await app?.close();
   });
 

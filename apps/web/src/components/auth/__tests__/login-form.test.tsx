@@ -13,9 +13,11 @@ vi.mock('@/lib/api-client', async (importOriginal) => ({
 
 const pushMock = vi.fn();
 
+const searchParamsMock = vi.hoisted(() => ({ params: new URLSearchParams() }));
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock, replace: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => searchParamsMock.params,
 }));
 
 const mockedFetch = vi.mocked(apiFetch);
@@ -23,6 +25,7 @@ const mockedFetch = vi.mocked(apiFetch);
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  searchParamsMock.params = new URLSearchParams();
 });
 
 function renderForm(): void {
@@ -98,5 +101,23 @@ describe('LoginForm', () => {
     mockedFetch.mockResolvedValueOnce({ user: signedInUser });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith('/'));
+  });
+
+  it('forwards the next path into the Google start URL', async () => {
+    searchParamsMock.params = new URLSearchParams('next=/contribute');
+    mockedFetch.mockResolvedValueOnce(null);
+    renderForm();
+    await screen.findByRole('heading', { name: 'Welcome back' });
+    const link = screen.getByRole('link', { name: /continue with google/i });
+    expect(link.getAttribute('href')).toContain('next=%2Fcontribute');
+  });
+
+  it('shows an inline message when Google sends the user back with an error', async () => {
+    searchParamsMock.params = new URLSearchParams('oauthError=failed');
+    mockedFetch.mockResolvedValueOnce(null);
+    renderForm();
+    await screen.findByRole('heading', { name: 'Welcome back' });
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toMatch(/did not complete/i);
   });
 });

@@ -14,6 +14,7 @@ import {
   type ProblemCursor,
 } from '../problems/problem-cursor';
 import { ProblemsService } from '../problems/problems.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { ensureDefaultCollectionId } from './favorites.util';
 
 type FavoriteSort = FavoriteListQuery['sort'];
@@ -37,6 +38,7 @@ export class FavoritesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly problems: ProblemsService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /** Idempotent toggle: returns the resulting favorite state. */
@@ -50,9 +52,11 @@ export class FavoritesService {
     if (existing) {
       // deleteMany keeps this idempotent under concurrent removals.
       await this.prisma.favoriteCollectionItem.deleteMany({ where: { collectionId, problemId } });
+      void this.analytics.record('favorites.removed', { userId, metadata: { problemId } });
       return { favorited: false };
     }
     await this.addMembership(collectionId, problemId);
+    void this.analytics.record('favorites.added', { userId, metadata: { problemId } });
     return { favorited: true };
   }
 
@@ -77,6 +81,7 @@ export class FavoritesService {
     await this.requirePublishedProblem(problemId);
     const collectionId = await ensureDefaultCollectionId(this.prisma, userId);
     await this.addMembership(collectionId, problemId);
+    void this.analytics.record('favorites.added', { userId, metadata: { problemId } });
     return { favorited: true };
   }
 
@@ -84,6 +89,7 @@ export class FavoritesService {
   async remove(userId: string, problemId: string): Promise<{ favorited: false }> {
     const collectionId = await ensureDefaultCollectionId(this.prisma, userId);
     await this.prisma.favoriteCollectionItem.deleteMany({ where: { collectionId, problemId } });
+    void this.analytics.record('favorites.removed', { userId, metadata: { problemId } });
     return { favorited: false };
   }
 

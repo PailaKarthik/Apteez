@@ -6,16 +6,20 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "generated"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "eslint src prisma/seed.ts",
+    "lint": "eslint src prisma/seed.ts prisma/seed-data.ts prisma/bootstrap.ts prisma/staging-seed.ts prisma/validate-migrations.mjs",
     "db:generate": "prisma generate",
     "db:migrate": "dotenv -e ../../.env -- prisma migrate dev",
     "db:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
     "db:seed": "dotenv -e ../../.env -- tsx prisma/seed.ts",
+    "db:seed:staging": "tsx prisma/staging-seed.ts",
+    "db:bootstrap": "tsx prisma/bootstrap.ts",
+    "db:validate": "node prisma/validate-migrations.mjs",
     "db:studio": "dotenv -e ../../.env -- prisma studio"
   },
   "dependencies": {

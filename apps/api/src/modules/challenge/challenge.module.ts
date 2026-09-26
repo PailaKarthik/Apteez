@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { QueueModule } from '../../queue/queue.module';
 import { RatingModule } from '../rating/rating.module';
+import { RewardsModule } from '../rewards/rewards.module';
 import { UsersModule } from '../users/users.module';
 import { ChallengeController } from './challenge.controller';
 import { ChallengeCoordinator } from './challenge.coordinator';
-import { ChallengeEvents } from './challenge.events';
 import { ChallengeGateway } from './challenge.gateway';
 import { ChallengeLiveStateService } from './challenge-live-state.service';
 import { ChallengeProcessor } from './challenge.processor';
@@ -19,11 +19,10 @@ import { MatchmakingService } from './matchmaking.service';
  * Socket.IO transport and the read-only REST surface.
  */
 @Module({
-  imports: [UsersModule, QueueModule, RatingModule],
+  imports: [UsersModule, QueueModule, RatingModule, RewardsModule],
   controllers: [ChallengeController],
   providers: [
     MatchmakingService,
-    ChallengeEvents,
     ChallengeResultService,
     ChallengeRealtime,
     ChallengeLiveStateService,

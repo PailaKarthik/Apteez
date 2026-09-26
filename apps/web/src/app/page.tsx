@@ -1,33 +1,37 @@
+import dynamic from 'next/dynamic';
 import { pageMetadata } from '@/lib/metadata';
 import { PageStack } from '@/components/layout/page-container';
-import { ArenaGrid } from '@/components/home/arena-grid';
-import { ExamStrip } from '@/components/home/exam-strip';
-import { Hero } from '@/components/home/hero';
-import { PersonalRow } from '@/components/home/personal-row';
-import { ProblemFeed } from '@/components/home/problem-feed';
-import { SectionHeader } from '@apteez/ui';
-import { StatusCard } from '@/components/home/status-card';
+import { ExamPatterns } from '@/components/home/exam-patterns';
+import { HomeGreeting } from '@/components/home/home-greeting';
+import { PracticeAreas } from '@/components/home/practice-areas';
 
 export const metadata = pageMetadata(
   'Home',
-  'ApteeZ home — challenges, contests, community and contributions.',
+  'ApteeZ home — exam patterns, practice areas and the problem library.',
+);
+
+// Below-the-fold library is the heaviest home chunk (filters + infinite
+// cursor table + favorites). Code-split it so first paint only pays for
+// greeting + folders + areas; the table streams in with its own skeleton.
+const ProblemLibrary = dynamic(
+  () => import('@/components/home/problem-library').then((m) => m.ProblemLibrary),
+  {
+    loading: () => (
+      <div className="space-y-3" aria-busy="true" aria-label="Loading problem library">
+        <div className="h-10 animate-pulse rounded-xl bg-muted" />
+        <div className="h-64 animate-pulse rounded-2xl bg-muted" />
+      </div>
+    ),
+  },
 );
 
 export default function HomePage(): React.JSX.Element {
   return (
     <PageStack>
-      <Hero />
-      <ArenaGrid />
-      <ProblemFeed />
-      <section aria-label="Exam contexts" className="space-y-4">
-        <SectionHeader
-          title="Prepare by exam"
-          description="Filter the library by the exams you are targeting."
-        />
-        <ExamStrip />
-      </section>
-      <PersonalRow />
-      <StatusCard />
+      <HomeGreeting />
+      <ExamPatterns />
+      <PracticeAreas />
+      <ProblemLibrary />
     </PageStack>
   );
 }

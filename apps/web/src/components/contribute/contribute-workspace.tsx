@@ -1,14 +1,14 @@
 'use client';
 
-import { FileText, PenLine } from 'lucide-react';
+import { FileText, Inbox, PenLine } from 'lucide-react';
 import * as React from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@apteez/ui';
 import { ContributionForm, DraftsList } from './contribution-form';
+import { MySubmissions } from './my-submissions';
 
 /**
- * Contribute workspace. Tabs split composing from reviewing local drafts so
- * the future review pipeline (pending → under review → approved/rejected)
- * can slot into the second tab without restructuring this page.
+ * Contribute workspace: compose new questions, track server-side submissions
+ * through review, and keep offline drafts on this device.
  */
 export function ContributeWorkspace(): React.JSX.Element {
   const [refreshSignal, setRefreshSignal] = React.useState(0);
@@ -20,20 +20,34 @@ export function ContributeWorkspace(): React.JSX.Element {
           <PenLine aria-hidden />
           New contribution
         </TabsTrigger>
+        <TabsTrigger value="submissions">
+          <Inbox aria-hidden />
+          My submissions
+        </TabsTrigger>
         <TabsTrigger value="drafts">
           <FileText aria-hidden />
-          My drafts
+          Device drafts
         </TabsTrigger>
       </TabsList>
       <TabsContent value="compose">
         <ContributionForm onSaved={() => setRefreshSignal((value) => value + 1)} />
       </TabsContent>
+      <TabsContent value="submissions">
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-card-title text-foreground">My submissions</h2>
+            <p className="text-sm text-muted-foreground">
+              Everything you sent for review, with live statuses and reviewer feedback.
+            </p>
+          </div>
+          <MySubmissions />
+        </div>
+      </TabsContent>
       <TabsContent value="drafts">
         <div className="space-y-2">
           <h2 className="text-card-title text-foreground">Drafts on this device</h2>
           <p className="text-sm text-muted-foreground">
-            Submitted contributions will appear here with their review status once the submission
-            workflow ships.
+            Offline copies only — submitting (above) is what sends a question to review.
           </p>
           <DraftsList refreshSignal={refreshSignal} />
         </div>

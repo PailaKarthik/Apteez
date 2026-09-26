@@ -13,6 +13,8 @@
  *   lock ......... generic distributed locks
  *   idem ......... generic one-shot idempotency markers
  *   ws .......... websocket event rate-limit counters
+ *   search ...... autocomplete, trending, filter metadata (short TTL)
+ *   recs ........ personalized recommendation snapshots (short TTL, per-user)
  */
 export const REDIS_NAMESPACE = 'apteez';
 
@@ -24,6 +26,9 @@ export const redisKeys = {
   loginAttempt: (emailHash: string): string => `${REDIS_NAMESPACE}:auth:login-attempt:${emailHash}`,
 
   oauthState: (state: string): string => `${REDIS_NAMESPACE}:auth:oauth-state:${state}`,
+
+  /** Hashed email-OTP record for a user (10-min TTL, few verify attempts). */
+  emailOtp: (userId: string): string => `${REDIS_NAMESPACE}:auth:email-otp:${userId}`,
 
   matchmakingQueue: (domainSlug: string): string =>
     `${REDIS_NAMESPACE}:matchmaking:queue:${domainSlug}`,
@@ -75,4 +80,50 @@ export const redisKeys = {
 
   websocketRate: (userId: string, event: string): string =>
     `${REDIS_NAMESPACE}:ws:rate:${userId}:${event}`,
+
+  /** Single-writer guard around event participant finalization. */
+  eventFinalizeLock: (eventId: string, userId: string): string =>
+    `${REDIS_NAMESPACE}:event:${eventId}:finalize:${userId}`,
+
+  /** Single-writer guard around whole-event rank recomputation. */
+  eventCloseLock: (eventId: string): string => `${REDIS_NAMESPACE}:event:${eventId}:close-lock`,
+
+  /** Single-writer guard around event registration (capacity backstop). */
+  eventRegisterLock: (eventId: string): string =>
+    `${REDIS_NAMESPACE}:event:${eventId}:register-lock`,
+
+  /** Cached discovery page (short TTL, invalidated on writes). */
+  eventListCache: (hash: string): string => `${REDIS_NAMESPACE}:event:list:${hash}`,
+
+  /** Cached event detail (short TTL, invalidated on writes). */
+  eventDetailCache: (eventId: string): string => `${REDIS_NAMESPACE}:event:detail:${eventId}`,
+
+  /** Live countdown / participant-count metadata (ephemeral). */
+  eventLive: (eventId: string): string => `${REDIS_NAMESPACE}:event:${eventId}:live`,
+
+  /** Cached autocomplete payload for a normalized query (shared, non-personal). */
+  searchSuggest: (queryHash: string): string => `${REDIS_NAMESPACE}:search:suggest:${queryHash}`,
+
+  /** Cached trending snapshot (shared, computed from unique-user signals). */
+  searchTrending: (): string => `${REDIS_NAMESPACE}:search:trending`,
+
+  /** Cached problem filter metadata (shared). */
+  searchFilters: (): string => `${REDIS_NAMESPACE}:search:filters`,
+
+  /** Personalized recommendation snapshot; always namespaced per user. */
+  recommendations: (userId: string, kind: string): string =>
+    `${REDIS_NAMESPACE}:recs:${userId}:${kind}`,
+
+  /** Cached admin overview snapshot (short TTL, counts only). */
+  adminOverview: (): string => `${REDIS_NAMESPACE}:admin:overview`,
+
+  /** Per-user daily AI budget counter for one feature (UTC day TTL). */
+  aiBudget: (userId: string, feature: string): string =>
+    `${REDIS_NAMESPACE}:ai:budget:${userId}:${feature}`,
+
+  /** Cached deterministic coach summary (short TTL, per user). */
+  aiCoachCache: (userId: string): string => `${REDIS_NAMESPACE}:ai:coach:${userId}`,
+
+  /** Cached similar-problem response (shared per problem, short TTL). */
+  aiSimilarCache: (problemId: string): string => `${REDIS_NAMESPACE}:ai:similar:${problemId}`,
 } as const;

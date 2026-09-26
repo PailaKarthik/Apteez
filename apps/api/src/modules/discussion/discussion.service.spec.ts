@@ -97,12 +97,13 @@ function createPrisma() {
 
 function makeService(): { service: DiscussionService; prisma: PrismaMock } {
   const prisma = createPrisma();
-  const service = new DiscussionService(prisma as unknown as PrismaService);
+  const analytics = { record: jest.fn().mockResolvedValue(undefined) };
+  const service = new DiscussionService(prisma as unknown as PrismaService, analytics as never);
   return { service, prisma };
 }
 
 const author = { id: 'a1', permissions: [] as string[] };
-const moderator = { id: 'mod', permissions: ['discussion.moderate'] };
+const moderator = { id: 'mod', permissions: ['moderate:discussions'] };
 
 describe('DiscussionService', () => {
   describe('list', () => {
@@ -111,7 +112,11 @@ describe('DiscussionService', () => {
       prisma.discussionPost.findMany.mockResolvedValue([post()]);
       prisma.discussionPost.count.mockResolvedValue(1);
 
-      const result = await service.list({ page: 1, pageSize: 20, sort: 'latest' } as DiscussionListQuery);
+      const result = await service.list({
+        page: 1,
+        pageSize: 20,
+        sort: 'latest',
+      } as DiscussionListQuery);
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0]?.title).toBe('Title of thread');
@@ -148,7 +153,11 @@ describe('DiscussionService', () => {
       prisma.discussionPost.findMany.mockResolvedValue([post({ body: 'x'.repeat(400) })]);
       prisma.discussionPost.count.mockResolvedValue(1);
 
-      const result = await service.list({ page: 1, pageSize: 20, sort: 'latest' } as DiscussionListQuery);
+      const result = await service.list({
+        page: 1,
+        pageSize: 20,
+        sort: 'latest',
+      } as DiscussionListQuery);
 
       expect(result.items[0]?.excerpt).toHaveLength(200);
       expect(result.items[0]?.excerpt.endsWith('...')).toBe(true);

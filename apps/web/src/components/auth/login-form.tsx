@@ -24,58 +24,48 @@ import {
   Input,
 } from '@apteez/ui';
 import { loginSchema, type LoginInput } from '@apteez/validation';
-import { ApiError, apiBrowserUrl, apiFetch } from '@/lib/api-client';
+import { ApiError, apiFetch } from '@/lib/api-client';
 import { AUTH_ME_QUERY_KEY, authErrorMessage, sanitizeNextPath, useAuth } from '@/hooks/use-auth';
+import { isStaffUser } from '@/hooks/use-admin';
 import { LoadingState } from '@apteez/ui';
+import { GoogleButton } from './google-button';
 
-function GoogleButton(): React.JSX.Element {
-  return (
-    <Button variant="outline" className="w-full" asChild>
-      <a href={apiBrowserUrl('/auth/google')}>
-        <GoogleIcon />
-        Continue with Google
-      </a>
-    </Button>
-  );
-}
+const OAUTH_ERROR_COPY: Record<string, string> = {
+  unavailable: 'Google sign-in is not available right now. Please use email instead.',
+  failed: 'Google sign-in did not complete. Please try again or use email.',
+};
 
-function GoogleIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" className="size-4" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1Z"
-      />
-      <path
-        fill="currentColor"
-        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23Z"
-      />
-      <path
-        fill="currentColor"
-        d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84Z"
-      />
-      <path
-        fill="currentColor"
-        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38Z"
-      />
-    </svg>
-  );
-}
+const OAUTH_REASON_COPY: Record<string, string> = {
+  expired: 'Your Google sign-in expired before completing. Please try again.',
+  token:
+    'Google rejected the sign-in handshake. The redirect URI in Google Cloud Console must exactly match the API callback URL.',
+  userinfo: 'Google could not verify this account. Please try again or use email.',
+  provision: 'We could not create your session. Please try again or use email.',
+};
 
 export function LoginForm(): React.JSX.Element {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const [formError, setFormError] = React.useState<string | null>(null);
 
   const next = sanitizeNextPath(searchParams.get('next'));
+  // Set by the API when a browser-navigated Google flow fails (see
+  // AuthController): shown inline instead of a raw JSON error page.
+  // oauthReason is an allowlisted stage code (expired|token|userinfo|provision).
+  const oauthError = searchParams.get('oauthError');
+  const oauthReason = searchParams.get('oauthReason');
+  const oauthMessage =
+    (oauthReason ? OAUTH_REASON_COPY[oauthReason] : undefined) ??
+    (oauthError ? (OAUTH_ERROR_COPY[oauthError] ?? OAUTH_ERROR_COPY.failed) : null);
 
   React.useEffect(() => {
     if (!isLoading && isAuthenticated) {
-      router.replace(next);
+      // Staff with no explicit destination land on the admin dashboard.
+      router.replace(next === '/' && isStaffUser(user) ? '/admin' : next);
     }
-  }, [isLoading, isAuthenticated, router, next]);
+  }, [isLoading, isAuthenticated, router, next, user]);
 
   const form = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
@@ -88,7 +78,7 @@ export function LoginForm(): React.JSX.Element {
     onSuccess: (data) => {
       queryClient.setQueryData(AUTH_ME_QUERY_KEY, data.user);
       toast.success(`Welcome back, ${data.user.displayName.split(' ')[0] ?? 'solver'}.`);
-      router.push(next);
+      router.push(next === '/' && isStaffUser(data.user) ? '/admin' : next);
       router.refresh();
     },
     onError: (error: unknown) => {
@@ -119,7 +109,15 @@ export function LoginForm(): React.JSX.Element {
           <CardDescription>Use your ApteeZ email and password.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <GoogleButton />
+          <GoogleButton next={next} label="Continue with Google" />
+          {oauthMessage ? (
+            <p
+              role="alert"
+              className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {oauthMessage}
+            </p>
+          ) : null}
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <span className="h-px flex-1 bg-border" aria-hidden />
             or with email

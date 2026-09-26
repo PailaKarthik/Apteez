@@ -137,7 +137,17 @@ function toApiError(status: number, payload: unknown, requestId?: string): ApiEr
 }
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
-const DEFAULT_TIMEOUT_MS = 15_000;
+// DB-backed endpoints can take seconds on cold/free-tier connections
+// (measured 13s+ for /auth/me); aborting early surfaces as a false
+// logged-out state, so the client must out-wait the server, not vice versa.
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** In-flight GET dedup: concurrent mounts of the same query share one fetch. */
+const inflight = new Map<string, Promise<unknown>>();
+
+function dedupKey(path: string): string {
+  return path;
+}
 
 /** API origin for full-page navigations (OAuth starts leave the SPA). */
 export function apiBrowserUrl(path: string): string {
@@ -152,56 +162,82 @@ export interface ApiRequestOptions extends Omit<RequestInit, 'body'> {
 /**
  * Centralized API client. Unwraps the `{ success, data }` envelope, throws
  * typed ApiError on any failure, and always sends the request-id header
- * contract (`x-request-id` echoed back by the API).
+ * contract (`x-request-id` echoed back by the API). Concurrent identical
+ * GETs share one in-flight request so parallel mounts never double-fetch.
  */
 export async function apiFetch<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const { body, timeoutMs = DEFAULT_TIMEOUT_MS, headers, ...init } = options;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  let response: Response;
-  try {
-    response = await fetch(`${BASE_URL}${path}`, {
-      ...init,
-      headers: { 'Content-Type': 'application/json', ...(headers ?? {}) },
-      credentials: 'include',
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    const timedOut = error instanceof DOMException && error.name === 'AbortError';
-    throw new ApiError({
-      kind: 'network',
-      status: 0,
-      code: timedOut ? 'TIMEOUT' : 'NETWORK_ERROR',
-      message: timedOut
-        ? 'The request timed out. Check your connection and try again.'
-        : 'Unable to reach the ApteeZ API. Check your connection and try again.',
-    });
-  } finally {
-    clearTimeout(timer);
+  const method = (init.method ?? 'GET').toUpperCase();
+  const isDedupable = method === 'GET' && body === undefined;
+  const key = isDedupable ? dedupKey(`${method} ${path}`) : null;
+  if (key && inflight.has(key)) {
+    return inflight.get(key) as Promise<T>;
   }
+  const task = (async (): Promise<T> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // Only send Content-Type when there is a JSON body. Sending it on
+    // bodyless GETs forces a CORS preflight (OPTIONS) on every read —
+    // doubling cross-origin HTTP traffic and every per-request server cost
+    // (throttleniosk + session lookup) for zero benefit.
+    const hasBody = body !== undefined;
 
-  const responseRequestId = response.headers.get('x-request-id') ?? undefined;
-  if (response.status === 204) {
-    return undefined as T;
-  }
+    let response: Response;
+    try {
+      response = await fetch(`${BASE_URL}${path}`, {
+        ...init,
+        headers: { ...(hasBody ? { 'Content-Type': 'application/json' } : {}), ...(headers ?? {}) },
+        credentials: 'include',
+        body: hasBody ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      const timedOut = error instanceof DOMException && error.name === 'AbortError';
+      throw new ApiError({
+        kind: 'network',
+        status: 0,
+        code: timedOut ? 'TIMEOUT' : 'NETWORK_ERROR',
+        message: timedOut
+          ? 'The request timed out. Check your connection and try again.'
+          : 'Unable to reach the ApteeZ API. Check your connection and try again.',
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = undefined;
-  }
+    const responseRequestId = response.headers.get('x-request-id') ?? undefined;
+    if (response.status === 204) {
+      return undefined as T;
+    }
 
-  if (!response.ok) {
-    throw toApiError(response.status, payload, responseRequestId);
-  }
-  if (isEnvelope(payload)) {
-    if (!payload.success) {
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = undefined;
+    }
+
+    if (!response.ok) {
       throw toApiError(response.status, payload, responseRequestId);
     }
-    return payload.data as T;
+    if (isEnvelope(payload)) {
+      if (!payload.success) {
+        throw toApiError(response.status, payload, responseRequestId);
+      }
+      return payload.data as T;
+    }
+    return payload as T;
+  })();
+  if (key) {
+    inflight.set(key, task);
+    void task.then(
+      () => {
+        inflight.delete(key);
+      },
+      () => {
+        inflight.delete(key);
+      },
+    );
   }
-  return payload as T;
+  return task;
 }

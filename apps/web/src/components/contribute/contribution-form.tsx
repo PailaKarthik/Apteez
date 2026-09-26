@@ -1,7 +1,7 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Trash2 } from 'lucide-react';
+import { Loader2, Trash2 } from 'lucide-react';
 import * as React from 'react';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -23,7 +23,12 @@ import {
   Textarea,
 } from '@apteez/ui';
 import { contributionQuestionSchema, type ContributionQuestionInput } from '@apteez/validation';
-import { QUESTION_DIFFICULTIES, QUESTION_TYPES } from '@apteez/types';
+import { QUESTION_DIFFICULTIES, type QuestionType } from '@apteez/types';
+import { ApiError } from '@/lib/api-client';
+import { authErrorMessage } from '@/hooks/use-auth';
+import { useResubmitContribution, useSubmitContribution } from '@/hooks/use-contributions';
+import { useCategories } from '@/hooks/use-problems';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@apteez/ui';
 
 const DRAFTS_KEY = 'apteez:contribution-drafts';
 
@@ -45,36 +50,171 @@ function readDrafts(): ContributionDraft[] {
   }
 }
 
-const TYPE_LABELS: Record<(typeof QUESTION_TYPES)[number], string> = {
+const TYPE_LABELS: Record<QuestionType, string> = {
   QUANTITATIVE: 'Quantitative',
   LOGICAL_REASONING: 'Logical reasoning',
   VERBAL: 'Verbal',
   DATA_INTERPRETATION: 'Data interpretation',
 };
 
+/** Section picker wired to the taxonomy (required for every submission). */
+function CategorySelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}): React.JSX.Element {
+  const categories = useCategories();
+  return (
+    <Select value={value} onValueChange={onChange} disabled={disabled || categories.isPending}>
+      <SelectTrigger aria-label="Section">
+        <SelectValue placeholder={categories.isPending ? 'Loading sections…' : 'Select section'} />
+      </SelectTrigger>
+      <SelectContent>
+        {(categories.data ?? []).map((category) => (
+          <SelectItem key={category.slug} value={category.slug}>
+            {category.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** Comma-separated exam folders, stored as a slug array. */
+function ExamTagsInput({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string[];
+  onChange: (value: string[]) => void;
+  disabled?: boolean;
+}): React.JSX.Element {
+  const [text, setText] = React.useState(value.join(', '));
+  React.useEffect(() => {
+    setText(value.join(', '));
+  }, [value.join(', ')]);
+  return (
+    <Input
+      placeholder="ssc, banking"
+      value={text}
+      disabled={disabled}
+      onChange={(event) => {
+        setText(event.target.value);
+        onChange([
+          ...new Set(
+            event.target.value
+              .split(',')
+              .map((part) => part.trim().toLowerCase())
+              .filter(Boolean),
+          ),
+        ]);
+      }}
+    />
+  );
+}
+
+const EMPTY_VALUES: ContributionQuestionInput = {
+  type: 'QUANTITATIVE',
+  difficulty: 'MEDIUM',
+  categorySlug: '',
+  topic: '',
+  examTagSlugs: [],
+  statement: '',
+  options: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }],
+  correctAnswerIndex: 0,
+  explanation: '',
+  sourceUrl: '',
+};
+
 /**
- * Contribution composer. Validates with the shared schema (the same shape
- * the future review API will accept) and keeps drafts locally until the
- * submission + review workflow ships in a later prompt.
+ * Contribution composer. "Submit for review" POSTs to the review queue
+ * (human reviewers are paged); "Save draft" keeps a local copy for offline
+ * composing. Also edits your own PENDING submission when `reviseId` is set.
  */
-export function ContributionForm({ onSaved }: { onSaved: () => void }): React.JSX.Element {
+export function ContributionForm({
+  onSaved,
+  initial,
+  reviseId,
+  onRevised,
+  submitLabel,
+  onSubmitOverride,
+}: {
+  onSaved: () => void;
+  initial?: ContributionQuestionInput;
+  reviseId?: string;
+  onRevised?: () => void;
+  /** Reviewer mode: custom CTA + handler instead of the contributor mutations. */
+  submitLabel?: string;
+  onSubmitOverride?: (values: ContributionQuestionInput) => Promise<unknown>;
+}): React.JSX.Element {
   const form = useForm<ContributionQuestionInput>({
     resolver: zodResolver(contributionQuestionSchema),
-    defaultValues: {
-      type: 'QUANTITATIVE',
-      difficulty: 'MEDIUM',
-      topic: '',
-      statement: '',
-      options: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }],
-      correctAnswerIndex: 0,
-      explanation: '',
-      sourceUrl: '',
-    },
+    defaultValues: initial ?? EMPTY_VALUES,
   });
+  const submit = useSubmitContribution();
+  const resubmit = useResubmitContribution(reviseId);
+
+  // When revising a different submission, reset the form to its values.
+  const initialKey = initial ? JSON.stringify(initial) : '';
+  React.useEffect(() => {
+    if (initial) {
+      form.reset(initial);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialKey]);
 
   const { fields } = useFieldArray({ control: form.control, name: 'options' });
+  const busy = submit.isPending || resubmit.isPending;
 
-  const onSubmit = (values: ContributionQuestionInput): void => {
+  const submitForReview = (values: ContributionQuestionInput): void => {
+    if (onSubmitOverride) {
+      void (async () => {
+        try {
+          await onSubmitOverride(values);
+          toast.success('Modifications saved', {
+            description: 'The submission stays in the review queue.',
+          });
+          form.reset();
+          onRevised?.();
+          onSaved();
+        } catch (error) {
+          toast.error(authErrorMessage(error, 'Could not save.'));
+        }
+      })();
+      return;
+    }
+    const mutation = reviseId ? resubmit : submit;
+    mutation.mutate(values, {
+      onSuccess: () => {
+        toast.success(reviseId ? 'Revision saved' : 'Submitted for review', {
+          description: reviseId
+            ? 'Your updated question is back in the queue.'
+            : 'A reviewer has been notified. Track it under My submissions.',
+        });
+        form.reset();
+        if (reviseId) {
+          onRevised?.();
+        } else {
+          onSaved();
+        }
+      },
+      onError: (error) => {
+        toast.error(
+          error instanceof ApiError && error.kind === 'server' && error.status === 503
+            ? 'Submissions are temporarily disabled. Save a draft and try later.'
+            : authErrorMessage(error, 'Could not submit.'),
+        );
+      },
+    });
+  };
+
+  const saveDraft = (): void => {
+    const values = form.getValues();
     const draft: ContributionDraft = {
       ...values,
       id: `draft-${Date.now()}`,
@@ -82,10 +222,7 @@ export function ContributionForm({ onSaved }: { onSaved: () => void }): React.JS
     };
     try {
       localStorage.setItem(DRAFTS_KEY, JSON.stringify([...readDrafts(), draft]));
-      toast.success('Draft saved', {
-        description: 'Stored on this device. Submission and review open soon.',
-      });
-      form.reset();
+      toast.success('Draft saved', { description: 'Stored on this device only.' });
       onSaved();
     } catch {
       toast.error('Could not save the draft', {
@@ -97,33 +234,52 @@ export function ContributionForm({ onSaved }: { onSaved: () => void }): React.JS
   return (
     <Card>
       <CardHeader>
-        <CardTitle>New contribution</CardTitle>
+        <CardTitle>{reviseId ? 'Revise contribution' : 'New contribution'}</CardTitle>
         <CardDescription>
-          Draft an original question. Server-side submission and reviewer workflow arrive in a later
-          release — drafts stay on this device until then.
+          {reviseId
+            ? 'Update your pending question — it stays in the review queue.'
+            : 'Draft an original question. Submitting sends it to human review; reviewers are notified automatically.'}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5" noValidate>
+          <form onSubmit={form.handleSubmit(submitForReview)} className="space-y-5" noValidate>
+            <FormField
+              control={form.control}
+              name="difficulty"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Difficulty</FormLabel>
+                  <FormControl>
+                    <select
+                      className="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      {...field}
+                    >
+                      {QUESTION_DIFFICULTIES.map((difficulty) => (
+                        <option key={difficulty} value={difficulty}>
+                          {difficulty.charAt(0) + difficulty.slice(1).toLowerCase()}
+                        </option>
+                      ))}
+                    </select>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <div className="grid gap-4 sm:grid-cols-2">
               <FormField
                 control={form.control}
-                name="type"
+                name="categorySlug"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Question family</FormLabel>
+                    <FormLabel>Section *</FormLabel>
                     <FormControl>
-                      <select
-                        className="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        {...field}
-                      >
-                        {QUESTION_TYPES.map((type) => (
-                          <option key={type} value={type}>
-                            {TYPE_LABELS[type]}
-                          </option>
-                        ))}
-                      </select>
+                      <CategorySelect
+                        value={field.value}
+                        onChange={field.onChange}
+                        disabled={busy}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -131,22 +287,24 @@ export function ContributionForm({ onSaved }: { onSaved: () => void }): React.JS
               />
               <FormField
                 control={form.control}
-                name="difficulty"
+                name="rating"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Difficulty</FormLabel>
+                    <FormLabel>
+                      Rating <span className="font-normal text-muted-foreground">(optional)</span>
+                    </FormLabel>
                     <FormControl>
-                      <select
-                        className="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        {...field}
-                      >
-                        {QUESTION_DIFFICULTIES.map((difficulty) => (
-                          <option key={difficulty} value={difficulty}>
-                            {difficulty.charAt(0) + difficulty.slice(1).toLowerCase()}
-                          </option>
-                        ))}
-                      </select>
+                      <Input
+                        placeholder="1500"
+                        inputMode="numeric"
+                        value={field.value ?? ''}
+                        onChange={(event) => {
+                          const raw = event.target.value.replace(/\D/g, '').slice(0, 4);
+                          field.onChange(raw ? Number(raw) : undefined);
+                        }}
+                      />
                     </FormControl>
+                    <FormDescription>1000–2000, whole hundreds. Defaults to 1500.</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -169,6 +327,51 @@ export function ContributionForm({ onSaved }: { onSaved: () => void }): React.JS
               )}
             />
 
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="examTagSlugs"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Exam folders{' '}
+                      <span className="font-normal text-muted-foreground">(optional)</span>
+                    </FormLabel>
+                    <FormControl>
+                      <ExamTagsInput
+                        value={field.value ?? []}
+                        onChange={field.onChange}
+                        disabled={busy}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="source"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Source <span className="font-normal text-muted-foreground">(optional)</span>
+                    </FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="e.g. SSC CGL 2023"
+                        value={field.value ?? ''}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        name={field.name}
+                        ref={field.ref}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
             <FormField
               control={form.control}
               name="statement"
@@ -182,6 +385,9 @@ export function ContributionForm({ onSaved }: { onSaved: () => void }): React.JS
                       {...field}
                     />
                   </FormControl>
+                  <FormDescription>
+                    At least 20 characters — write it exactly as a solver sees it.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -237,7 +443,9 @@ export function ContributionForm({ onSaved }: { onSaved: () => void }): React.JS
                       {...field}
                     />
                   </FormControl>
-                  <FormDescription>Reviewers check this first — be explicit.</FormDescription>
+                  <FormDescription>
+                    At least 20 characters. Reviewers check this first — be explicit.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -259,9 +467,17 @@ export function ContributionForm({ onSaved }: { onSaved: () => void }): React.JS
               )}
             />
 
-            <Button type="submit" disabled={form.formState.isSubmitting}>
-              {form.formState.isSubmitting ? 'Saving…' : 'Save draft'}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={busy || form.formState.isSubmitting}>
+                {busy ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                {submitLabel ?? (reviseId ? 'Save revision' : 'Submit for review')}
+              </Button>
+              {!reviseId && !onSubmitOverride ? (
+                <Button type="button" variant="outline" onClick={saveDraft}>
+                  Save draft
+                </Button>
+              ) : null}
+            </div>
           </form>
         </Form>
       </CardContent>
@@ -291,7 +507,7 @@ export function DraftsList({ refreshSignal }: { refreshSignal: number }): React.
     return (
       <Card>
         <CardContent className="p-5 text-sm text-muted-foreground">
-          No drafts yet. Compose your first question above — it will appear here.
+          No drafts on this device. Compose above — submitting sends it straight to review.
         </CardContent>
       </Card>
     );

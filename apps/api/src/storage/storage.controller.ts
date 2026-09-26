@@ -6,13 +6,15 @@ import { extname } from 'node:path';
 import { Public } from '../common/decorators/public.decorator';
 import { StorageService } from './storage.service';
 
+// SVGs are deliberately absent: no upload path accepts SVG (avatar mime
+// allowlist + magic-byte check), so a stray .svg can never execute inline —
+// it falls through to application/octet-stream below.
 const CONTENT_TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
   '.avif': 'image/avif',
   '.pdf': 'application/pdf',
 };
@@ -30,7 +32,14 @@ export class StorageController {
   @Get('*')
   async serve(@Param() params: Record<string, string>, @Res() res: Response): Promise<void> {
     const key = params['0'] ?? '';
-    const handle = key ? this.storage.getLocalFile(key) : null;
+    let handle: { absolutePath: string } | null = null;
+    try {
+      handle = key ? this.storage.getLocalFile(key) : null;
+    } catch {
+      // sanitizeKey rejects traversal/empty keys — indistinguishable from
+      // a missing asset to callers.
+      handle = null;
+    }
     if (!handle) {
       throw new NotFoundException({
         statusCode: 404,
@@ -60,6 +69,7 @@ export class StorageController {
     );
     res.setHeader('Content-Length', String(size));
     res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     createReadStream(handle.absolutePath).pipe(res);
   }
 }

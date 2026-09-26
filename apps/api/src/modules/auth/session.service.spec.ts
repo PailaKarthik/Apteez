@@ -34,12 +34,56 @@ class FakeRedis {
     });
   }
 
-  async del(key: string): Promise<void> {
-    this.strings.delete(key);
+  async del(key: string | string[]): Promise<void> {
+    for (const k of Array.isArray(key) ? key : [key]) {
+      this.strings.delete(k);
+      this.sets.delete(k);
+    }
   }
 
   async exists(key: string): Promise<boolean> {
     return this.alive(key);
+  }
+
+  async sadd(key: string, member: string, ttlSeconds?: number): Promise<void> {
+    const set = this.sets.get(key) ?? new Set<string>();
+    set.add(member);
+    this.sets.set(key, set);
+    if (ttlSeconds && ttlSeconds > 0) {
+      await this.expire(key, ttlSeconds);
+    }
+  }
+
+  async srem(key: string, member: string): Promise<void> {
+    this.sets.get(key)?.delete(member);
+  }
+
+  async smembers(key: string): Promise<string[]> {
+    return [...(this.sets.get(key) ?? [])];
+  }
+
+  async expire(key: string, seconds: number): Promise<void> {
+    this.expiredKeys.push(`${key}:${seconds}`);
+    const entry = this.strings.get(key);
+    if (entry) {
+      entry.expiresAt = Date.now() + seconds * 1000;
+    }
+  }
+
+  async ttl(_key: string): Promise<number> {
+    return this.ttlOverride ?? 1209600;
+  }
+
+  async incr(key: string, ttlSeconds: number): Promise<number> {
+    const raw = this.strings.get(key)?.value;
+    const current = raw === undefined ? 0 : Number.parseInt(raw, 10) || 0;
+    const next = current + 1;
+    const entry = this.strings.get(key);
+    this.strings.set(key, { value: String(next), expiresAt: entry?.expiresAt ?? 0 });
+    if (next === 1 && ttlSeconds > 0) {
+      await this.expire(key, ttlSeconds);
+    }
+    return next;
   }
 
   getClient(): unknown {
@@ -96,6 +140,12 @@ function makeService(ttlSeconds = 1209600): { service: SessionService; fake: Fak
     set: (key: string, value: string, ttl?: number) => fake.set(key, value, ttl),
     del: (key: string) => fake.del(key),
     exists: (key: string) => fake.exists(key),
+    sadd: (key: string, member: string, ttl?: number) => fake.sadd(key, member, ttl),
+    srem: (key: string, member: string) => fake.srem(key, member),
+    smembers: (key: string) => fake.smembers(key),
+    expire: (key: string, seconds: number) => fake.expire(key, seconds),
+    ttl: (key: string) => fake.ttl(key),
+    incr: (key: string, ttlSeconds: number) => fake.incr(key, ttlSeconds),
     getClient: () => fake.getClient(),
   } as unknown as RedisService;
   const config = {

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { RewardsModule } from '../rewards/rewards.module';
 import { ContestController } from './contest.controller';
 import { ContestRatingCalculator } from './contest-rating.calculator';
 import { ContestRepository } from './contest.repository';
@@ -12,6 +13,7 @@ import { ContestService } from './contest.service';
  * is why mutations accept an injected user rather than assuming a role.
  */
 @Module({
+  imports: [RewardsModule],
   controllers: [ContestController],
   providers: [ContestRatingCalculator, ContestRepository, ContestService],
   exports: [ContestService],

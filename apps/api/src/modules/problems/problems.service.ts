@@ -129,6 +129,22 @@ export class ProblemsService {
   }
 
   /**
+   * Total matching problems for the current list filters. Reuses the exact
+   * same predicate builder as `list` (minus the cursor), so the Home library
+   * header count can never disagree with the rows. Same auth rule: solved /
+   * favorited filters require a signed-in caller.
+   */
+  async count(query: ProblemListQuery, userId?: string): Promise<{ total: number }> {
+    if ((query.solved !== undefined || query.favorited !== undefined) && !userId) {
+      throw new AuthRequiredError('Sign in to filter problems by your solved or favorite state.');
+    }
+    const total = await this.prisma.problem.count({
+      where: this.buildWhere(query, userId, null),
+    });
+    return { total };
+  }
+
+  /**
    * Batched per-user attempt summary for a page of problems — one aggregate
    * query instead of a per-card lookup (N+1 guard).
    */
@@ -153,11 +169,21 @@ export class ProblemsService {
         AND "problemId" = ANY(${ids}::uuid[])
       GROUP BY "problemId"
     `);
+    // Contest solves count as solved too (attempts/accuracy stay practice-only).
+    const contestSolved = await this.prisma.contestAnswer.findMany({
+      where: {
+        userId,
+        isCorrect: true,
+        contestQuestion: { problemId: { in: ids } },
+      },
+      select: { contestQuestion: { select: { problemId: true } } },
+    });
+    const contestSolvedIds = new Set(contestSolved.map((row) => row.contestQuestion.problemId));
     for (const row of rows) {
       const attempts = Number(row.attempts);
       const correct = Number(row.correct);
       map.set(row.problem_id, {
-        solved: Number(row.solved) > 0,
+        solved: Number(row.solved) > 0 || contestSolvedIds.has(row.problem_id),
         attemptCount: attempts,
         correctCount: correct,
         incorrectCount: Number(row.incorrect),
@@ -165,6 +191,20 @@ export class ProblemsService {
         averageTimeSeconds: row.avg_time === null ? null : Math.round(Number(row.avg_time)),
         lastAttemptAt: row.last_attempt ? new Date(row.last_attempt).toISOString() : null,
       });
+    }
+    // Problems solved ONLY in contests have no submission row at all.
+    for (const problemId of contestSolvedIds) {
+      if (!map.has(problemId)) {
+        map.set(problemId, {
+          solved: true,
+          attemptCount: 0,
+          correctCount: 0,
+          incorrectCount: 0,
+          personalAccuracy: null,
+          averageTimeSeconds: null,
+          lastAttemptAt: null,
+        });
+      }
     }
     return map;
   }
@@ -335,8 +375,16 @@ export class ProblemsService {
     }
 
     if (userId) {
+      // Solved anywhere: practice submissions OR correct contest answers.
       const solved: Prisma.ProblemWhereInput = {
-        submissions: { some: { userId, isCorrect: true } },
+        OR: [
+          { submissions: { some: { userId, isCorrect: true } } },
+          {
+            contestQuestions: {
+              some: { answers: { some: { userId, isCorrect: true } } },
+            },
+          },
+        ],
       };
       const favorited: Prisma.ProblemWhereInput = {
         favorites: { some: { collection: { ownerId: userId } } },
@@ -344,7 +392,10 @@ export class ProblemsService {
       if (query.solved === true) {
         and.push(solved);
       } else if (query.solved === false) {
-        and.push({ submissions: { none: { userId, isCorrect: true } } });
+        and.push({
+          submissions: { none: { userId, isCorrect: true } },
+          contestQuestions: { none: { answers: { some: { userId, isCorrect: true } } } },
+        });
       }
       if (query.favorited === true) {
         and.push(favorited);
@@ -454,11 +505,20 @@ export class ProblemsService {
     if (ids.length === 0) {
       return { solvedIds: new Set(), favoritedIds: new Set() };
     }
-    const [solved, favorited] = await Promise.all([
+    const [solved, contestSolved, favorited] = await Promise.all([
       this.prisma.submission.findMany({
         where: { userId, problemId: { in: ids }, status: 'SUBMITTED', isCorrect: true },
         select: { problemId: true },
         distinct: ['problemId'],
+      }),
+      // Correct contest answers solve the problem in the library too.
+      this.prisma.contestAnswer.findMany({
+        where: {
+          userId,
+          isCorrect: true,
+          contestQuestion: { problemId: { in: ids } },
+        },
+        select: { contestQuestion: { select: { problemId: true } } },
       }),
       this.prisma.favoriteCollectionItem.findMany({
         where: { problemId: { in: ids }, collection: { ownerId: userId } },
@@ -466,7 +526,10 @@ export class ProblemsService {
       }),
     ]);
     return {
-      solvedIds: new Set(solved.map((row) => row.problemId)),
+      solvedIds: new Set([
+        ...solved.map((row) => row.problemId),
+        ...contestSolved.map((row) => row.contestQuestion.problemId),
+      ]),
       favoritedIds: new Set(favorited.map((row) => row.problemId)),
     };
   }

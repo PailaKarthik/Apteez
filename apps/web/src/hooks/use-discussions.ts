@@ -33,9 +33,7 @@ export function useDiscussions(query: Partial<DiscussionListQuery> = {}) {
   return useQuery({
     queryKey: ['discussions', query],
     queryFn: () =>
-      apiFetch<PaginatedData<DiscussionThreadSummaryDto>>(
-        `/discussions${toSearchParams(query)}`,
-      ),
+      apiFetch<PaginatedData<DiscussionThreadSummaryDto>>(`/discussions${toSearchParams(query)}`),
     staleTime: 15_000,
   });
 }

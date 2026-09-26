@@ -29,3 +29,23 @@ export function expireJobId(challengeId: string): string {
 export function ratingJobId(challengeId: string): string {
   return `rating_${challengeId}`;
 }
+
+/** Event notification queue (async delivery; PostgreSQL stays the source of truth). */
+export const EVENT_QUEUE = 'event-jobs';
+
+export const EVENT_JOBS = {
+  /** Persist one notification row for a user. */
+  notify: 'event.notify',
+  /** Fan-out a notification to every participant of an event. */
+  notifyParticipants: 'event.notify-participants',
+} as const;
+
+export type EventJobName = (typeof EVENT_JOBS)[keyof typeof EVENT_JOBS];
+
+export function eventNotifyJobId(eventId: string, userId: string, type: string): string {
+  return `event_notify_${eventId}_${userId}_${type}`;
+}
+
+export function eventFanoutJobId(eventId: string, type: string): string {
+  return `event_fanout_${eventId}_${type}`;
+}

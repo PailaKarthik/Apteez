@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '@apteez/database';
-import type { Prisma } from '@apteez/database';
+import { Prisma, PrismaService } from '@apteez/database';
 import { DEFAULT_CHALLENGE_RATING } from './rating.config';
 import { RatingDomainNotFoundError } from './rating.errors';
 
@@ -69,26 +68,22 @@ export class RatingRepository {
   /**
    * Lazy-create the (user, domain) rating at the default value if it is
    * missing, then return the row. Concurrency-safe: the unique key is the
-   * primary key, so a racing insert is swallowed and re-read.
+   * primary key, so a racing insert is swallowed and re-read. Runs outside
+   * any interactive transaction (Neon pooler kills those with P2028).
    */
-  async ensureRating(
-    tx: Prisma.TransactionClient,
-    userId: string,
-    domainSlug: string,
-    categoryId: string,
-  ): Promise<RatingRow> {
-    const existing = await tx.challengeRating.findUnique({
+  async ensureRating(userId: string, domainSlug: string, categoryId: string): Promise<RatingRow> {
+    const existing = await this.prisma.challengeRating.findUnique({
       where: { userId_domainSlug: { userId, domainSlug } },
     });
     if (existing) {
       return existing;
     }
     try {
-      return await tx.challengeRating.create({
+      return await this.prisma.challengeRating.create({
         data: { userId, domainSlug, categoryId, rating: DEFAULT_CHALLENGE_RATING },
       });
     } catch {
-      const row = await tx.challengeRating.findUnique({
+      const row = await this.prisma.challengeRating.findUnique({
         where: { userId_domainSlug: { userId, domainSlug } },
       });
       if (!row) {
@@ -99,15 +94,24 @@ export class RatingRepository {
   }
 
   /**
-   * Apply one player's rating change and append its history row. The history
-   * insert carries `@@unique([challengeId, userId])`, so a duplicate
-   * application is rejected at the database level rather than trusted to the
-   * caller.
+   * Apply one player's rating change and append its history row — without an
+   * interactive transaction (Neon pooler kills those with P2028). Exactly-once
+   * per side is enforced by a conditional update instead:
+   *
+   * - The rating row moves only when it still holds the expected `before`
+   *   value, so a retried attempt can never double-apply.
+   * - The history insert carries `@@unique([challengeId, userId])`, so a
+   *   duplicate is rejected at the database level.
+   * - Crash between the two is healed on retry: if the row already shows the
+   *   `after` value with no history row yet, only the history insert is
+   *   replayed. Anything else means genuine concurrent movement (unreachable
+   *   under the processing lock) and throws loudly instead of corrupting.
    */
-  async applyRating(tx: Prisma.TransactionClient, input: RecordRatingInput): Promise<void> {
+  async applyRating(input: RecordRatingInput): Promise<'applied' | 'already'> {
     const { side } = input;
-    await tx.challengeRating.update({
-      where: { userId_domainSlug: { userId: side.userId, domainSlug: input.domainSlug } },
+    const key = { userId: side.userId, domainSlug: input.domainSlug };
+    const updated = await this.prisma.challengeRating.updateMany({
+      where: { userId: key.userId, domainSlug: key.domainSlug, rating: side.ratingBefore },
       data: {
         rating: side.ratingAfter,
         gamesPlayed: { increment: 1 },
@@ -117,24 +121,57 @@ export class RatingRepository {
         lastPlayedAt: new Date(),
       },
     });
-    await tx.challengeRatingHistory.create({
-      data: {
-        userId: side.userId,
-        domainSlug: input.domainSlug,
-        categoryId: input.categoryId,
-        challengeId: input.challengeId,
-        opponentId: side.opponentId,
-        ratingBefore: side.ratingBefore,
-        ratingAfter: side.ratingAfter,
-        ratingChange: side.ratingChange,
-        opponentRatingBefore: side.opponentRatingBefore,
-        opponentRatingAfter: side.opponentRatingAfter,
-        outcome: side.outcome,
-        result: side.result,
-        score: side.score,
-        opponentScore: side.opponentScore,
-      },
+    if (updated.count === 1) {
+      await this.createHistory(input);
+      return 'applied';
+    }
+    const hist = await this.prisma.challengeRatingHistory.findUnique({
+      where: { challengeId_userId: { challengeId: input.challengeId, userId: side.userId } },
+      select: { id: true },
     });
+    if (hist) {
+      return 'already';
+    }
+    const current = await this.prisma.challengeRating.findUnique({
+      where: { userId_domainSlug: key },
+      select: { rating: true },
+    });
+    if (current && current.rating === side.ratingAfter) {
+      await this.createHistory(input);
+      return 'applied';
+    }
+    throw new Error(`rating moved concurrently user=${side.userId} challenge=${input.challengeId}`);
+  }
+
+  private async createHistory(input: RecordRatingInput): Promise<void> {
+    const { side } = input;
+    try {
+      await this.prisma.challengeRatingHistory.create({
+        data: {
+          userId: side.userId,
+          domainSlug: input.domainSlug,
+          categoryId: input.categoryId,
+          challengeId: input.challengeId,
+          opponentId: side.opponentId,
+          ratingBefore: side.ratingBefore,
+          ratingAfter: side.ratingAfter,
+          ratingChange: side.ratingChange,
+          opponentRatingBefore: side.opponentRatingBefore,
+          opponentRatingAfter: side.opponentRatingAfter,
+          outcome: side.outcome,
+          result: side.result,
+          score: side.score,
+          opponentScore: side.opponentScore,
+        },
+      });
+    } catch (error) {
+      // A racing attempt already recorded this side: the rating row moved
+      // exactly once via the conditional update above, so this is convergence.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return;
+      }
+      throw error;
+    }
   }
 
   async listRatings(userId: string, domainSlug?: string): Promise<RatingWithDomain[]> {

@@ -3,6 +3,7 @@ import { Sidebar } from './sidebar';
 import { SiteFooter } from './footer';
 import { Topbar } from './topbar';
 import { MobileTabBar } from './mobile-tab-bar';
+import { EmailVerificationBanner } from '@/components/auth/email-verification-banner';
 
 /**
  * Persistent application shell — the only layout in the product.
@@ -18,6 +19,7 @@ export function AppShell({ children }: { children: React.ReactNode }): React.JSX
       <Sidebar className="hidden lg:flex" />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />
+        <EmailVerificationBanner />
         <main id="main-content" className="flex flex-1 flex-col">
           <PageContainer>{children}</PageContainer>
         </main>

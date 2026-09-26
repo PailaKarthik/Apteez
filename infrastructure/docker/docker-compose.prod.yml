@@ -1,0 +1,111 @@
+name: apteez-prod
+#
+# Local production-like stack: builds the real API / worker / web images and
+# wires them to Neon PostgreSQL + local Redis, mirroring the free-tier
+# topology (EC2 API/worker → Neon + Upstash/S3 in production).
+#
+# PostgreSQL is NEVER run here — Neon is the only permanent database — and
+# Redis is NEVER run here either: Upstash is the only Redis. Pass both from
+# the environment (see `.env.example`):
+#   $env:DATABASE_URL = '<Neon pooled connection>'
+#   $env:DIRECT_URL = '<Neon direct connection>'
+#   $env:UPSTASH_REDIS_URL = '<Upstash rediss:// TCP endpoint>'
+#   $env:COOKIE_SECRET = 'a-long-random-secret'
+#   docker compose -f infrastructure/docker/docker-compose.prod.yml --env-file .env up --build
+#
+# There is no dev compose file: local processes talk to Neon/Upstash
+# directly (`pnpm dev`), so dev/prod can never diverge on infrastructure.
+#
+# The `migrate` service runs `prisma migrate deploy` once and exits before
+# the API boots (never `prisma db push` outside local dev).
+
+services:
+  migrate:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+      target: migrate
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL (Neon pooled connection) before starting the stack}
+      DIRECT_URL: ${DIRECT_URL:?Set DIRECT_URL (Neon direct connection) before starting the stack}
+    # One-shot: exits 0 after migrations apply; api/worker wait for it.
+    restart: 'no'
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+      target: runner
+    restart: unless-stopped
+    command: ['node', 'dist/main']
+    ports:
+      - '${API_PORT:-3001}:3001'
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL (Neon pooled connection) before starting the stack}
+      DIRECT_URL: ${DIRECT_URL:?Set DIRECT_URL (Neon direct connection) before starting the stack}
+      # Upstash Redis (TCP/TLS endpoint). Passed through for the app's
+      # centralized resolver — never a container hostname.
+      UPSTASH_REDIS_URL: ${UPSTASH_REDIS_URL:?Set UPSTASH_REDIS_URL (Upstash rediss:// endpoint) before starting the stack}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      API_URL: ${API_URL:-http://localhost:3001}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      TRUST_PROXY: 1
+      COOKIE_SECRET: ${COOKIE_SECRET:?Set COOKIE_SECRET before starting the stack}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      STORAGE_LOCAL_DIR: /app/.data/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'node -e "fetch(`http://localhost:3001/api/v1/health/live`).then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    volumes:
+      - apidata:/app/.data
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+      target: runner
+    restart: unless-stopped
+    # Same image, queue-only entrypoint: no HTTP listener, no sockets.
+    command: ['node', 'dist/worker']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL (Neon pooled connection) before starting the stack}
+      DIRECT_URL: ${DIRECT_URL:?Set DIRECT_URL (Neon direct connection) before starting the stack}
+      UPSTASH_REDIS_URL: ${UPSTASH_REDIS_URL:?Set UPSTASH_REDIS_URL (Upstash rediss:// endpoint) before starting the stack}
+      COOKIE_SECRET: ${COOKIE_SECRET:?Set COOKIE_SECRET before starting the stack}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      STORAGE_LOCAL_DIR: /app/.data/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - apidata:/app/.data
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001/api/v1}
+    restart: unless-stopped
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  apidata:

@@ -2,6 +2,7 @@ import { Injectable, type LoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../../config/env';
 import { getRequestId } from '../context/request-context';
+import { redactSecrets, redactString } from './log-redact';
 
 type LogLevel = 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'verbose';
 
@@ -71,7 +72,12 @@ export class AppLogger implements LoggerService {
     if (LEVEL_ORDER[level] > LEVEL_ORDER[this.minLevel]) {
       return;
     }
-    const text = typeof message === 'string' ? message : JSON.stringify(message);
+    // Central redaction: every line is scrubbed before it reaches stdout, the
+    // aggregator, or Sentry breadcrumbs. Telemetry counters and ids pass
+    // through; credentials, tokens, cookies and connection strings do not.
+    const text =
+      typeof message === 'string' ? redactString(message) : JSON.stringify(redactSecrets(message));
+    const safeStack = stack ? redactString(stack) : undefined;
     const requestId = getRequestId();
     if (this.production) {
       const entry: Record<string, unknown> = {
@@ -83,8 +89,8 @@ export class AppLogger implements LoggerService {
       if (requestId) {
         entry.requestId = requestId;
       }
-      if (stack) {
-        entry.stack = stack;
+      if (safeStack) {
+        entry.stack = safeStack;
       }
       const line = JSON.stringify(entry);
       if (level === 'error' || level === 'fatal' || level === 'warn') {
@@ -98,8 +104,8 @@ export class AppLogger implements LoggerService {
     const formatted = `[${context ?? 'Application'}]${suffix} ${text}`;
     if (level === 'error' || level === 'fatal') {
       console.error(formatted);
-      if (stack) {
-        console.error(stack);
+      if (safeStack) {
+        console.error(safeStack);
       }
     } else if (level === 'warn') {
       console.warn(formatted);

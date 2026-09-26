@@ -9,6 +9,8 @@ import type { AttemptDto, AttemptResultDto } from '@apteez/types';
 import type { SubmitAttemptInput } from '@apteez/validation';
 import { AppLogger } from '../../common/logger/app-logger';
 import { ProblemsService } from '../problems/problems.service';
+import { PointsService } from '../rewards/points.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 /**
  * A practice duration is capped defensively: a stale browser tab must not
@@ -33,6 +35,8 @@ export class PracticeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly problems: ProblemsService,
+    private readonly points: PointsService,
+    private readonly analytics: AnalyticsService,
     private readonly logger: AppLogger,
   ) {}
 
@@ -76,8 +80,19 @@ export class PracticeService {
     }
 
     // Idempotent replay: a finalized attempt is never mutated, so the first
-    // result stands and is returned again.
+    // result stands and is returned again. The solve reward is re-checked
+    // here too so a retry after a partial failure still grants it exactly once.
     if (attempt.status === 'SUBMITTED') {
+      if (attempt.isCorrect === true) {
+        void this.points
+          .awardTrigger({
+            userId,
+            trigger: 'problem-solve',
+            sourceType: 'submission',
+            sourceId: attemptId,
+          })
+          .catch(() => undefined);
+      }
       return this.buildResult(attempt, userId);
     }
     if (attempt.status !== 'STARTED') {
@@ -125,6 +140,22 @@ export class PracticeService {
         `practice.submit userId=${userId} problem=${problemId} correct=${String(finalized.isCorrect)} time=${String(finalized.timeSpentSeconds)}s`,
         'Practice',
       );
+    }
+    if (finalized.isCorrect === true) {
+      // Activity reward for a correct solve. Idempotent per submission and
+      // daily-capped; best-effort so rewards never break submitting.
+      void this.points
+        .awardTrigger({
+          userId,
+          trigger: 'problem-solve',
+          sourceType: 'submission',
+          sourceId: attemptId,
+        })
+        .catch(() => undefined);
+    }
+    void this.analytics.record('practice.submitted', { userId, metadata: { problemId } });
+    if (finalized.isCorrect === true) {
+      void this.analytics.record('practice.solved', { userId, metadata: { problemId } });
     }
     return this.buildResult(finalized, userId);
   }

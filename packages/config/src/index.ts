@@ -18,7 +18,16 @@ export const API_PREFIX = 'api';
 export const API_VERSION = '1';
 
 export type NavIcon =
-  'home' | 'swords' | 'trophy' | 'compass' | 'crown' | 'messages' | 'calendar' | 'target' | 'pen';
+  | 'home'
+  | 'swords'
+  | 'trophy'
+  | 'compass'
+  | 'crown'
+  | 'messages'
+  | 'calendar'
+  | 'target'
+  | 'pen'
+  | 'gift';
 
 export interface NavItem {
   key: string;
@@ -47,6 +56,7 @@ export const PRIMARY_NAV: readonly NavItem[] = [
  */
 export const PERSONAL_NAV: readonly NavItem[] = [
   { key: 'targets', label: 'Weekly Targets', href: '/targets', icon: 'target', badge: 'soon' },
+  { key: 'rewards', label: 'Rewards', href: '/rewards', icon: 'gift' },
   { key: 'contribute', label: 'Contribute', href: '/contribute', icon: 'pen' },
 ] as const;
 

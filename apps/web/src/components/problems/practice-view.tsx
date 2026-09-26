@@ -1,11 +1,17 @@
 'use client';
 
-import { ArrowRight, BookOpen, Check, RotateCcw, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Check, RotateCcw, Sparkles, X } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import * as React from 'react';
 import type { AttemptResultDto } from '@apteez/types';
+import { difficultyForRating } from '@apteez/types';
 import { Badge, Button, Card, CardContent, ErrorState, ProgressRing, cn } from '@apteez/ui';
 import { useProblem } from '@/hooks/use-problems';
+import { useAuth } from '@/hooks/use-auth';
+import { useFavoriteMembership } from '@/hooks/use-favorites';
+import { CollectionPicker } from '@/components/favorites/collection-picker';
+import { FavoriteButton } from '@/components/favorites/favorite-button';
 import {
   useNextProblem,
   usePracticeCacheSync,
@@ -15,8 +21,31 @@ import {
 } from '@/hooks/use-practice';
 import { OptionRenderer } from './option-renderer';
 import { QuestionRenderer } from './question-renderer';
+import { SimilarProblems } from './similar-problems';
 
 const DIFFICULTY_TONE = { EASY: 'success', MEDIUM: 'warning', HARD: 'destructive' } as const;
+
+const HISTORY_KEY = 'apteez:problem-history';
+const HISTORY_LIMIT = 50;
+
+/** Ids visited this tab, oldest-first — the backbone of Previous. */
+function readHistory(): string[] {
+  try {
+    const raw = sessionStorage.getItem(HISTORY_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeHistory(ids: string[]): void {
+  try {
+    sessionStorage.setItem(HISTORY_KEY, JSON.stringify(ids.slice(-HISTORY_LIMIT)));
+  } catch {
+    // Storage unavailable — Previous simply stays disabled.
+  }
+}
 
 /**
  * Practice surface. Before submission the correct answer does not exist in
@@ -31,16 +60,36 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
   const startAttempt = useStartAttempt(problemId);
   const submitAttempt = useSubmitAttempt(problemId);
   const { syncAfterSubmit } = usePracticeCacheSync();
+  const { isAuthenticated } = useAuth();
+  const membership = useFavoriteMembership(isAuthenticated ? [problemId] : []);
 
   const [selected, setSelected] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<AttemptResultDto | null>(null);
+  const [previousId, setPreviousId] = React.useState<string | null>(null);
   const startedAtRef = React.useRef<number | null>(null);
+  const router = useRouter();
 
   React.useEffect(() => {
     setSelected(null);
     setResult(null);
     startedAtRef.current = null;
+    const history = readHistory();
+    const last = history[history.length - 1] ?? null;
+    setPreviousId(last && last !== problemId ? last : (history[history.length - 2] ?? null));
+    if (last !== problemId) {
+      writeHistory([...history, problemId]);
+    }
   }, [problemId]);
+
+  const goPrevious = (): void => {
+    if (!previousId) {
+      return;
+    }
+    const history = readHistory();
+    history.pop();
+    writeHistory(history);
+    router.push(`/problems/${previousId}`);
+  };
 
   const handleSelect = (optionId: string): void => {
     setSelected(optionId);
@@ -111,6 +160,7 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
   const correctId = result?.result.correctOptionId ?? null;
   const isAnswered = result !== null;
   const isCorrect = result?.result.isCorrect ?? false;
+  const isFavorited = membership.data?.[0]?.isFavorited ?? data.isFavorited ?? false;
 
   return (
     <div className="space-y-5">
@@ -123,17 +173,24 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
             >
               {data.category.name}
             </Link>
-            <span aria-hidden>/</span>
-            <span>{data.topic.name}</span>
+            {data.topic ? (
+              <>
+                <span aria-hidden>/</span>
+                <span>{data.topic.name}</span>
+              </>
+            ) : null}
           </div>
 
           <div className="flex flex-wrap items-start justify-between gap-3">
             <h1 className="text-section-title text-foreground">{data.title}</h1>
             <div className="flex items-center gap-2">
               <Badge variant={DIFFICULTY_TONE[data.difficulty]}>{data.difficulty}</Badge>
-              <Badge variant="secondary">
+              <Badge
+                variant="secondary"
+                title={`Rated ${data.rating} (${difficultyForRating(data.rating)})`}
+              >
                 <span className="font-metric">{data.rating}</span>
-                <span className="sr-only"> rating</span>
+                <span className="sr-only"> rated {difficultyForRating(data.rating)}</span>
               </Badge>
             </div>
           </div>
@@ -240,6 +297,44 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
         </CardContent>
       </Card>
 
+      <div className="flex flex-wrap gap-2" aria-label="Question navigation">
+        <Button variant="outline" onClick={goPrevious} disabled={!previousId}>
+          <ArrowLeft aria-hidden />
+          Previous
+        </Button>
+        {next.data ? (
+          <Button asChild>
+            <Link href={`/problems/${next.data.id}`}>
+              Next problem
+              <ArrowRight aria-hidden />
+            </Link>
+          </Button>
+        ) : null}
+      </div>
+
+      <Card>
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-foreground">Favorites</p>
+            <p className="text-xs text-muted-foreground">
+              {isAuthenticated
+                ? 'Save this problem or file it into a collection.'
+                : 'Sign in to save favorites.'}
+            </p>
+          </div>
+          {isAuthenticated ? (
+            <div className="flex items-center gap-2">
+              <FavoriteButton problemId={problemId} favorited={isFavorited} variant="full" />
+              <CollectionPicker problemId={problemId} />
+            </div>
+          ) : (
+            <Button variant="outline" asChild>
+              <Link href="/login">Sign in to save</Link>
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
       {isAnswered ? (
         <div className="space-y-3">
           {result?.result.explanation ? (
@@ -275,25 +370,19 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
           ) : null}
 
           <div className="flex flex-wrap gap-2">
-            {next.data ? (
-              <Button asChild>
-                <Link href={`/problems/${next.data.id}`}>
-                  Next problem
-                  <ArrowRight aria-hidden />
-                </Link>
-              </Button>
-            ) : null}
             <Button variant="outline" onClick={resetForRetry}>
               <RotateCcw aria-hidden />
               Try again
             </Button>
-            <Button variant="ghost" asChild>
-              <Link href="/explore">Back to problems</Link>
+            <Button variant="ghost" onClick={() => router.back()}>
+              <ArrowLeft aria-hidden />
+              Back
             </Button>
           </div>
         </div>
       ) : null}
 
+      <SimilarProblems problemId={problemId} />
       {stats.data ? (
         <Card>
           <CardContent className="flex flex-wrap items-center gap-4 p-5">

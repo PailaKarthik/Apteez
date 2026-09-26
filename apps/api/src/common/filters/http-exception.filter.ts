@@ -1,8 +1,17 @@
-import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException } from '@nestjs/common';
+import {
+  type ArgumentsHost,
+  Catch,
+  type ExceptionFilter,
+  HttpException,
+  Optional,
+} from '@nestjs/common';
 import { type Request, type Response } from 'express';
+import * as Sentry from '@sentry/node';
 import type { ApiErrorCode, ApiFieldError } from '@apteez/types';
 import { AppError } from '../errors/app-error';
 import { AppLogger } from '../logger/app-logger';
+import { sentryEnabled } from '../observability/sentry';
+import { RateLimitMonitor } from '../throttle/rate-limit-monitor';
 
 interface StructuredBody {
   statusCode?: number;
@@ -31,6 +40,14 @@ function statusToCode(status: number): ApiErrorCode {
   if (status === 409) {
     return 'CONFLICT';
   }
+  if (status === 413 || status === 415) {
+    // No PAYLOAD_TOO_LARGE / UNSUPPORTED_MEDIA code exists in the shared
+    // contract; both are client-correctable request errors.
+    return 'BAD_REQUEST';
+  }
+  if (status === 422) {
+    return 'VALIDATION_ERROR';
+  }
   if (status === 429) {
     return 'RATE_LIMITED';
   }
@@ -41,6 +58,15 @@ function statusToCode(status: number): ApiErrorCode {
     return 'SERVICE_UNAVAILABLE';
   }
   return 'INTERNAL_ERROR';
+}
+
+/** Duck-typed so common/ never depends on the multer package directly. */
+function isMulterError(exception: unknown): boolean {
+  return (
+    typeof exception === 'object' &&
+    exception !== null &&
+    (exception as { name?: unknown }).name === 'MulterError'
+  );
 }
 
 function extractMessage(body: unknown, fallback: string): string {
@@ -67,7 +93,10 @@ function extractMessage(body: unknown, fallback: string): string {
  */
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
-  constructor(private readonly logger: AppLogger) {}
+  constructor(
+    private readonly logger: AppLogger,
+    @Optional() private readonly rateLimits?: RateLimitMonitor,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -85,6 +114,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
       code = exception.code;
       message = exception.message;
       details = exception.details;
+    } else if (isMulterError(exception)) {
+      // Multer (multipart parsing) throws outside the interceptor chain:
+      // oversized files, wrong field names, truncated streams. All are
+      // client-correctable, so they map to 400 with a generic message
+      // instead of leaking driver internals as a 500.
+      status = 400;
+      code = 'BAD_REQUEST';
+      message = 'File upload failed. Check the file type, size, and field name.';
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const body = exception.getResponse();
@@ -109,11 +146,32 @@ export class HttpExceptionFilter implements ExceptionFilter {
         exception instanceof Error ? exception.stack : undefined,
         'Exceptions',
       );
+      if (sentryEnabled()) {
+        Sentry.withScope((scope) => {
+          scope.setTag('requestId', requestId);
+          scope.setTag('route', `${request.method} ${request.route?.path ?? request.url}`);
+          const user = (request as Request & { user?: { id?: string } }).user;
+          if (user?.id) {
+            scope.setUser({ id: user.id });
+          }
+          Sentry.captureException(exception);
+        });
+      }
     } else if (status >= 400) {
       this.logger.warn(
         `Request rejected ${request.method} ${request.url} -> ${status} (${code})`,
         'Exceptions',
       );
+      if (status === 429) {
+        // 429 observability: route-template counters for on-call (best
+        // effort, never blocks the rejection path).
+        void this.rateLimits
+          ?.recordRejected({
+            method: request.method,
+            path: request.route?.path ?? request.url.split('?')[0] ?? 'unknown',
+          })
+          .catch(() => undefined);
+      }
     }
 
     response.status(status).json({

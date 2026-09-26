@@ -1,0 +1,18 @@
+-- Final RAG index decision: NO approximate index — exact cosine scan.
+--
+-- Both ANN options were evaluated against this stack and rejected with
+-- evidence, not preference:
+--   1. HNSW: this Neon's storage layer aborts the build
+--      ([NEON_SMGR] unlogged index build was not properly finished), solo
+--      or combined, inside a migration transaction.
+--   2. IVFFLAT: hard-caps at 2000 dimensions per column while
+--      gemini-embedding-001 needs 3072
+--      (ERROR: column cannot have more than 2000 dimensions for ivfflat index).
+-- Truncating vectors to fit an index would silently degrade retrieval
+-- quality, so the full 3072-dim vectors stay and queries run exact `<=>`
+-- scan — sub-millisecond at the current corpus size (15 problems), and the
+-- retrieval code never required an index in the first place.
+-- Revisit only on evidence: when exact scan appears in slow-query logs,
+-- either Matryoshka-truncate to <=2000 dims + IVFFLAT, or HNSW if Neon
+-- lifts the restriction.
+DROP INDEX IF EXISTS "problem_embeddings_embedding_idx";

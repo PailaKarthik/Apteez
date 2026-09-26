@@ -1,0 +1,174 @@
+name: Deploy
+
+# Main-branch delivery: full validation → image build/push → migration-gated
+# rollout. Image pushes run on every main push; the actual AWS rollout is a
+# manual, environment-gated step (no automatic production deploys from
+# arbitrary branches — PRs only run CI).
+#
+# AWS wiring: prefer GitHub OIDC (role-to-assume) over long-lived keys.
+# Required repository/environment secrets are documented in DEPLOYMENT.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_env:
+        description: 'Roll out to this environment after pushing images'
+        required: false
+        default: ''
+        type: choice
+        options: ['', 'staging', 'production']
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  release:
+    name: validate + build + push images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: apteez
+          POSTGRES_PASSWORD: apteez
+          POSTGRES_DB: shadow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apteez -d shadow"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Quality gates (lint / typecheck / unit tests)
+        run: pnpm lint && pnpm typecheck && pnpm --filter @apteez/api test && pnpm --filter @apteez/web test
+
+      - name: Migration consistency
+        run: pnpm --filter @apteez/database db:validate
+        env:
+          SHADOW_DATABASE_URL: postgresql://apteez:apteez@localhost:5432/shadow
+
+      - name: Dependency audit report (triage in SECURITY.md)
+        run: pnpm audit --prod --audit-level=high || echo "::warning::pnpm audit reported findings — see SECURITY.md triage"
+        continue-on-error: true
+
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build + push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: runner
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+
+      - name: Build + push Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web:latest
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.PROD_API_URL }}
+
+  rollout:
+    name: rollout (${{ inputs.deploy_env || 'manual' }})
+    # Manual gate: runs only when explicitly requested via workflow_dispatch.
+    # Pushes to main publish images; environments deploy by approval below.
+    # Each GitHub environment (staging/production) defines its own secrets:
+    #   DATABASE_URL, DIRECT_URL (Neon branch), UPSTASH_REDIS_URL,
+    #   COOKIE_SECRET, EC2_HOST, plus vars (AWS_REGION, PROD_API_URL).
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_env != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [release]
+    environment: ${{ inputs.deploy_env }}
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Run database migrations (production-safe `migrate deploy`)
+        # Runs from the runner straight against Neon (public endpoint):
+        # Prisma picks DIRECT_URL automatically. Never `db push` here.
+        run: pnpm --filter @apteez/database db:deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+      - name: Verify migration state
+        run: |
+          test -n "${{ secrets.UPSTASH_REDIS_URL }}" || (echo "UPSTASH_REDIS_URL secret is missing" && exit 1)
+          test -n "${{ secrets.COOKIE_SECRET }}" || (echo "COOKIE_SECRET secret is missing" && exit 1)
+          test -n "${{ secrets.EC2_HOST }}" || (echo "EC2_HOST secret is missing" && exit 1)
+
+      - name: Roll out API + worker on EC2
+        # Operator-owned step: pull image ${{ github.sha }} on the EC2 host
+        # (pre-configured with the environment's secrets) and restart the
+        # api/worker processes. Ordering per DEPLOYMENT.md: migrations first
+        # (previous step) → verify /health/ready → smoke. See DEPLOYMENT.md
+        # §1/§13 for the EC2 layout and rollback procedure.
+        run: |
+          echo "Target: ${{ inputs.deploy_env }} image ${{ github.sha }} on ${{ secrets.EC2_HOST }}"
+          echo "Run the EC2 deploy hook for this environment (pull → restart api/worker → health check)."

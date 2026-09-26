@@ -24,8 +24,32 @@ const practiceMock = vi.hoisted(() => ({
   sync: vi.fn(),
 }));
 
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+}));
+
 vi.mock('@/hooks/use-problems', () => ({
   useProblem: () => practiceMock.problem,
+}));
+
+vi.mock('@/hooks/use-auth', () => ({
+  useAuth: () => ({ isAuthenticated: false, user: null }),
+}));
+
+vi.mock('@/hooks/use-favorites', () => ({
+  useFavoriteMembership: () => ({ data: undefined }),
+}));
+
+vi.mock('@/components/favorites/favorite-button', () => ({
+  FavoriteButton: () => null,
+}));
+
+vi.mock('@/components/favorites/collection-picker', () => ({
+  CollectionPicker: () => null,
+}));
+
+vi.mock('@/hooks/use-search', () => ({
+  useSimilarProblems: () => ({ data: undefined, isLoading: false, isError: false }),
 }));
 
 vi.mock('@/hooks/use-practice', () => ({
@@ -53,6 +77,8 @@ afterEach(() => {
   practiceMock.submitIsPending = false;
   practiceMock.submitIsError = false;
   practiceMock.submitError = undefined;
+  practiceMock.next.data = undefined;
+  window.sessionStorage.clear();
 });
 
 function problem(): ProblemDetailDto {
@@ -163,6 +189,21 @@ describe('PracticeView', () => {
     await waitFor(() => expect(screen.getByText('Not quite')).toBeDefined());
     expect(screen.getByText('Explanation')).toBeDefined();
     expect(screen.queryByText('Shortcut')).toBeNull();
+  });
+
+  it('disables Previous on first visit and hides Next without a recommendation', () => {
+    practiceMock.problem = { data: problem(), isPending: false, isError: false, refetch: vi.fn() };
+    render(<PracticeView problemId="a0000000-0000-4000-8000-000000000001" />);
+    expect(screen.getByRole('button', { name: 'Previous' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('link', { name: /Next problem/ })).toBeNull();
+  });
+
+  it('links to the recommended next problem when one exists', () => {
+    practiceMock.problem = { data: problem(), isPending: false, isError: false, refetch: vi.fn() };
+    practiceMock.next.data = { id: 'b0000000-0000-4000-8000-000000000002' };
+    render(<PracticeView problemId="a0000000-0000-4000-8000-000000000001" />);
+    const next = screen.getByRole('link', { name: /Next problem/ });
+    expect(next.getAttribute('href')).toBe('/problems/b0000000-0000-4000-8000-000000000002');
   });
 
   it('shows the personal solved summary when stats exist', () => {

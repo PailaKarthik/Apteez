@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, PrismaService } from '@apteez/database';
+import { AnalyticsService } from '../analytics/analytics.service';
 import type {
   DiscussionAuthorDto,
   DiscussionReactionResultDto,
@@ -27,7 +28,9 @@ import {
 } from './discussion.errors';
 
 /** Moderators may lock/pin/delete any thread; authors only their own. */
-const MODERATOR_PERMISSIONS = ['discussion.moderate', 'admin.all'];
+// Matches the seeded `action:resource` grants: the moderator role carries
+// `moderate:discussions`; super admins bypass via `manage:platform`.
+const MODERATOR_PERMISSIONS = ['moderate:discussions', 'manage:platform'];
 
 const AUTHOR_SELECT = {
   id: true,
@@ -61,7 +64,10 @@ type Moderatable = { id: string; permissions: string[] };
  */
 @Injectable()
 export class DiscussionService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly analytics: AnalyticsService,
+  ) {}
 
   /** Paginated discovery across threads with search, tag, sort and author filters. */
   async list(
@@ -196,6 +202,7 @@ export class DiscussionService {
         problemId: input.problemId ?? null,
       },
     });
+    void this.analytics.record('discussion.created', { userId, metadata: { postId: created.id } });
     return this.detail(created.id, { page: 1, pageSize: 30 }, { id: userId, permissions: [] });
   }
 
@@ -261,6 +268,10 @@ export class DiscussionService {
         data: { replyCount, lastActivityAt: new Date() },
       });
       return created;
+    });
+    void this.analytics.record('discussion.reply_created', {
+      userId,
+      metadata: { postId, replyId: reply.id },
     });
     return this.toReply(reply, null, {
       viewerId: userId,
@@ -416,6 +427,10 @@ export class DiscussionService {
         reason: input.reason,
         detail: input.detail ?? null,
       },
+    });
+    void this.analytics.record('discussion.reported', {
+      userId,
+      metadata: { reason: input.reason },
     });
     return { reported: true };
   }

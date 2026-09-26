@@ -2,13 +2,17 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ChallengeStateDto } from '@apteez/types';
-import { ChallengeArena } from '../challenge-arena';
+import { ChallengeArena, ChallengeHistorySection } from '../challenge-arena';
 
 const mocks = vi.hoisted(() => ({
   live: {
     phase: 'idle' as string,
     connected: true,
     state: null as ChallengeStateDto | null,
+    matched: null,
+    answerPending: false,
+    answerSlow: false,
+    answerError: null,
     error: null as { code: string; message: string } | null,
   },
   startMatchmaking: vi.fn(),
@@ -18,17 +22,76 @@ const mocks = vi.hoisted(() => ({
   reset: vi.fn(),
   domains: {
     data: [
-      { slug: 'quantitative', name: 'Quantitative Aptitude', icon: null, problemCount: 4 },
-      { slug: 'logical-reasoning', name: 'Logical Reasoning', icon: null, problemCount: 0 },
+      {
+        slug: 'quantitative',
+        name: 'Quantitative Aptitude',
+        icon: null,
+        problemCount: 4,
+        durationSeconds: 120,
+      },
+      {
+        slug: 'logical-reasoning',
+        name: 'Logical Reasoning',
+        icon: null,
+        problemCount: 0,
+        durationSeconds: 120,
+      },
     ],
     isPending: false,
     isError: false,
     refetch: vi.fn(),
   },
   result: { data: undefined as unknown, isPending: false, isError: false, refetch: vi.fn() },
+  historyStats: {
+    data: {
+      domainSlug: null,
+      matches: 3,
+      wins: 2,
+      losses: 1,
+      draws: 0,
+      winRate: 66.7,
+      bestScore: 5,
+      avgScore: 2.3,
+      totalCorrect: 9,
+      totalWrong: 4,
+    },
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+  },
+  historyPage: {
+    data: {
+      items: [
+        {
+          id: 'h1',
+          domainSlug: 'quantitative',
+          domainName: 'Quantitative Aptitude',
+          outcome: 'PLAYER1_WIN',
+          completionReason: 'TIMER_EXPIRED',
+          result: 'WIN',
+          isSolo: false,
+          selfScore: 4,
+          opponentScore: 1,
+          ratingChange: 12,
+          opponent: { id: 'u2', username: 'rival', displayName: 'Rival', avatarKey: null },
+          playedAt: new Date().toISOString(),
+          durationSeconds: 120,
+        },
+      ],
+      total: 1,
+      offset: 0,
+      limit: 10,
+      hasMore: false,
+    },
+    isPending: false,
+    isError: false,
+    isFetching: false,
+    refetch: vi.fn(),
+  },
 }));
 
 vi.mock('@/hooks/use-challenge', () => ({
+  CHALLENGE_HISTORY_PAGE_SIZE: 10,
   useChallenge: () => ({
     ...mocks.live,
     connect: vi.fn(),
@@ -41,7 +104,23 @@ vi.mock('@/hooks/use-challenge', () => ({
   }),
   useChallengeDomains: () => mocks.domains,
   useChallengeResult: () => mocks.result,
+  useChallengeHistoryPage: () => mocks.historyPage,
+  useChallengeHistoryStats: () => mocks.historyStats,
 }));
+
+vi.mock('@/lib/invalidate-activity', () => ({
+  invalidateActivityQueries: vi.fn(),
+}));
+
+const apiFetchMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/api-client', () => ({
+  apiFetch: apiFetchMock,
+}));
+
+vi.mock('@tanstack/react-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-query')>();
+  return { ...actual, useQueryClient: () => ({ invalidateQueries: vi.fn() }) };
+});
 
 afterEach(() => {
   cleanup();
@@ -50,6 +129,7 @@ afterEach(() => {
   mocks.live.state = null;
   mocks.live.connected = true;
   mocks.live.error = null;
+  apiFetchMock.mockResolvedValue(undefined);
 });
 
 function liveState(): ChallengeStateDto {
@@ -58,6 +138,7 @@ function liveState(): ChallengeStateDto {
     domainSlug: 'quantitative',
     domainName: 'Quantitative Aptitude',
     status: 'LIVE',
+    isSolo: false,
     config: {
       domainSlug: 'quantitative',
       questionCount: 8,
@@ -211,15 +292,118 @@ describe('ChallengeArena', () => {
       },
       questions: [],
       ratingChange: { self: null, opponent: null },
+      ratingStatus: 'COMPLETED',
+      isSolo: false,
     };
     render(<ChallengeArena />);
     expect(screen.getByText('Victory')).toBeDefined();
     expect(screen.getByRole('button', { name: /Play again/ })).toBeDefined();
   });
 
+  it('shows the solo countdown and unrated result copy', () => {
+    mocks.live.phase = 'countdown';
+    mocks.live.state = {
+      ...liveState(),
+      status: 'COUNTDOWN',
+      isSolo: true,
+      countdownEndsAt: new Date(Date.now() + 5000).toISOString(),
+      question: null,
+    };
+    const { unmount } = render(<ChallengeArena />);
+    expect(screen.getByText('Solo run ready')).toBeDefined();
+    expect(screen.getByText(/unrated solo/)).toBeDefined();
+    unmount();
+    mocks.live.phase = 'completed';
+    mocks.live.state = { ...liveState(), status: 'COMPLETED', question: null };
+    mocks.result.data = {
+      ...(mocks.result.data as Record<string, unknown>),
+      isSolo: true,
+    };
+    render(<ChallengeArena />);
+    expect(screen.getByText(/Solo run — scores count/)).toBeDefined();
+  });
+
   it('surfaces socket errors', () => {
     mocks.live.error = { code: 'AUTH_REQUIRED', message: 'Sign in to play.' };
     render(<ChallengeArena />);
     expect(screen.getByRole('alert').textContent).toContain('Sign in to play.');
+  });
+
+  it('shows checking-results with no verdict while the result loads', () => {
+    mocks.live.phase = 'completed';
+    mocks.live.state = { ...liveState(), status: 'COMPLETED', question: null };
+    mocks.result.data = undefined;
+    mocks.result.isPending = true;
+    render(<ChallengeArena />);
+    expect(screen.getByText('Checking results…')).toBeDefined();
+    expect(screen.queryByText('Victory')).toBeNull();
+    expect(screen.queryByText('Defeat')).toBeNull();
+    mocks.result.isPending = false;
+  });
+
+  it('shows the finalizing state after the timer expires', () => {
+    mocks.live.phase = 'finalizing';
+    mocks.live.state = liveState();
+    render(<ChallengeArena />);
+    expect(screen.getByText('Checking results…')).toBeDefined();
+    expect(screen.getByText(/Tallying final scores/)).toBeDefined();
+  });
+
+  it('retries a failed rating through the retry endpoint', async () => {
+    mocks.live.phase = 'completed';
+    mocks.live.state = { ...liveState(), status: 'COMPLETED', question: null };
+    mocks.result.data = {
+      id: 'c1',
+      domainSlug: 'quantitative',
+      domainName: 'Quantitative Aptitude',
+      outcome: 'PLAYER1_WIN',
+      completionReason: 'TIMER_EXPIRED',
+      winnerId: 'u1',
+      durationSeconds: 120,
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      player1: {
+        id: 'u1',
+        username: 'me',
+        displayName: 'Me',
+        avatarKey: null,
+        rating: 1000,
+        correct: 5,
+        wrong: 1,
+        unanswered: 2,
+        score: 4,
+      },
+      player2: {
+        id: 'u2',
+        username: 'rival',
+        displayName: 'Rival',
+        avatarKey: null,
+        rating: 1000,
+        correct: 3,
+        wrong: 2,
+        unanswered: 3,
+        score: 1,
+      },
+      questions: [],
+      ratingChange: { self: null, opponent: null },
+      ratingStatus: 'FAILED',
+      isSolo: false,
+    };
+    render(<ChallengeArena />);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry rating' }));
+    expect(await screen.findByText('Retrying…')).toBeDefined();
+    expect(apiFetchMock).toHaveBeenCalledWith('/challenges/c1/rating/retry', { method: 'POST' });
+    expect(mocks.result.refetch).toHaveBeenCalled();
+  });
+
+  it('renders history stats and entries with offset paging', () => {
+    render(<ChallengeHistorySection />);
+    expect(screen.getByText('Match history')).toBeDefined();
+    expect(screen.getByText('66.7%')).toBeDefined();
+    // Domain name appears twice: the filter pill and the history entry.
+    expect(screen.getAllByText('Quantitative Aptitude').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('WIN')).toBeDefined();
+    expect(screen.getByText('4 – 1')).toBeDefined();
+    expect(screen.getByText('+12')).toBeDefined();
   });
 });

@@ -34,7 +34,7 @@ export interface ProblemListRow {
   createdAt: Date;
   publishedAt: Date | null;
   category: ProblemRefRow;
-  topic: ProblemRefRow;
+  topic: ProblemRefRow | null;
   subtopic: ProblemRefRow | null;
   exams: Array<{ examTag: ProblemRefRow }>;
   _count: { options: number };

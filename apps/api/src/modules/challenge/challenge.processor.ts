@@ -1,5 +1,6 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job } from 'bullmq';
+import { runWithJobRequestId } from '../../common/context/request-context';
 import { AppLogger } from '../../common/logger/app-logger';
 import { CHALLENGE_JOBS, CHALLENGE_QUEUE } from '../../queue/queue.constants';
 import { RatingService } from '../rating/rating.service';
@@ -9,6 +10,7 @@ import { MatchmakingService } from './matchmaking.service';
 
 interface ChallengeJobData {
   challengeId?: string;
+  requestId?: string;
 }
 
 @Processor(CHALLENGE_QUEUE)
@@ -24,6 +26,10 @@ export class ChallengeProcessor extends WorkerHost {
   }
 
   async process(job: Job<ChallengeJobData>): Promise<void> {
+    return runWithJobRequestId(job.data, () => this.dispatch(job));
+  }
+
+  private async dispatch(job: Job<ChallengeJobData>): Promise<void> {
     switch (job.name) {
       case CHALLENGE_JOBS.activate:
         await this.handleActivate(job);
@@ -32,10 +38,10 @@ export class ChallengeProcessor extends WorkerHost {
         await this.handleExpire(job);
         return;
       case CHALLENGE_JOBS.matchmakingSweep:
-        await this.handleMatchmakingSweep();
+        await this.handleMatchmakingSweep(job);
         return;
       case CHALLENGE_JOBS.liveStateCleanup:
-        await this.handleLiveStateCleanup();
+        await this.handleLiveStateCleanup(job);
         return;
       case CHALLENGE_JOBS.ratingUpdate:
         await this.handleRatingUpdate(job);
@@ -50,11 +56,14 @@ export class ChallengeProcessor extends WorkerHost {
     if (!challengeId) {
       return;
     }
+    // Rethrown on purpose: the queue retries with backoff and the failed
+    // set keeps evidence. loadChallenge/syncStatus are idempotent.
     try {
       const challenge = await this.challenges.loadChallenge(challengeId);
       await this.challenges.syncStatus(challenge);
     } catch (error) {
-      this.warn(`activate id=${challengeId}`, error);
+      this.warn(`activate id=${challengeId} job=${job.id}`, error);
+      throw error;
     }
   }
 
@@ -67,23 +76,26 @@ export class ChallengeProcessor extends WorkerHost {
       await this.challenges.finalizeOnce(challengeId, 'TIMER_EXPIRED');
       await this.liveState.clearChallengeState(challengeId);
     } catch (error) {
-      this.warn(`expire id=${challengeId}`, error);
+      this.warn(`expire id=${challengeId} job=${job.id}`, error);
+      throw error;
     }
   }
 
-  private async handleMatchmakingSweep(): Promise<void> {
+  private async handleMatchmakingSweep(job: Job<ChallengeJobData>): Promise<void> {
     try {
       await this.matchmaking.sweepStale();
     } catch (error) {
-      this.warn('matchmaking-sweep', error);
+      this.warn(`matchmaking-sweep job=${job.id}`, error);
+      throw error;
     }
   }
 
-  private async handleLiveStateCleanup(): Promise<void> {
+  private async handleLiveStateCleanup(job: Job<ChallengeJobData>): Promise<void> {
     try {
       await this.liveState.sweepExpired();
     } catch (error) {
-      this.warn('live-state-cleanup', error);
+      this.warn(`live-state-cleanup job=${job.id}`, error);
+      throw error;
     }
   }
 

@@ -65,6 +65,60 @@ describe('ContestRatingCalculator', () => {
     expect(top.ratingAfter).toBeLessThanOrEqual(4000);
   });
 
+  it('rewards faster-than-median finishes with a bounded pace bonus', () => {
+    const base = { ratingBefore: 1000, rank: 5, fieldSize: 20, fieldAverage: 1000 } as const;
+    const fast = calculator.calculate({
+      ...base,
+      completionSeconds: 600,
+      fieldMedianSeconds: 1200,
+    });
+    const median = calculator.calculate({
+      ...base,
+      completionSeconds: 1200,
+      fieldMedianSeconds: 1200,
+    });
+    const slow = calculator.calculate({
+      ...base,
+      completionSeconds: 2400,
+      fieldMedianSeconds: 1200,
+    });
+    expect(fast.speedBonus).toBeGreaterThan(0);
+    expect(fast.speedBonus).toBeLessThanOrEqual(8);
+    expect(median.speedBonus).toBe(0);
+    expect(slow.speedBonus).toBeLessThan(0);
+    expect(slow.speedBonus).toBeGreaterThanOrEqual(-8);
+    expect(fast.ratingChange).toBeGreaterThan(median.ratingChange);
+    expect(slow.ratingChange).toBeLessThan(median.ratingChange);
+  });
+
+  it('ignores pace when the data is missing or degenerate', () => {
+    const base = { ratingBefore: 1000, rank: 5, fieldSize: 20, fieldAverage: 1000 } as const;
+    expect(calculator.calculate(base).speedBonus).toBe(0);
+    expect(
+      calculator.calculate({ ...base, completionSeconds: 600, fieldMedianSeconds: 0 }).speedBonus,
+    ).toBe(0);
+    expect(
+      calculator.calculate({ ...base, completionSeconds: 600, fieldMedianSeconds: null })
+        .speedBonus,
+    ).toBe(0);
+    expect(
+      calculator.calculate({ ratingBefore: 1000, rank: 1, fieldSize: 1, fieldAverage: 1000 })
+        .speedBonus,
+    ).toBe(0);
+  });
+
+  it('keeps rank + pace inside the per-contest clamp', () => {
+    const extreme = calculator.calculate({
+      ratingBefore: 100,
+      rank: 1,
+      fieldSize: 500,
+      fieldAverage: 3000,
+      completionSeconds: 1,
+      fieldMedianSeconds: 3600,
+    });
+    expect(Math.abs(extreme.ratingChange)).toBeLessThanOrEqual(64);
+  });
+
   it('is deterministic', () => {
     const input = { ratingBefore: 1234, rank: 3, fieldSize: 16, fieldAverage: 1300 } as const;
     expect(calculator.calculate(input)).toEqual(calculator.calculate(input));

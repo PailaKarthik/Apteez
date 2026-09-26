@@ -16,4 +16,20 @@ export class HealthController {
     res.status(statusCode);
     return body;
   }
+
+  /** Liveness: process is running. No dependency checks — cheap for kubelet. */
+  @Public()
+  @Get('live')
+  live(): { status: 'ok'; uptimeSeconds: number; timestamp: string } {
+    return this.health.liveness();
+  }
+
+  /** Readiness: dependencies (DB/Redis/queues) are reachable. */
+  @Public()
+  @Get('ready')
+  async ready(@Res({ passthrough: true }) res: Response): Promise<HealthData> {
+    const { statusCode, body } = await this.health.check();
+    res.status(statusCode);
+    return body;
+  }
 }

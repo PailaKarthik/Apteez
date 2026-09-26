@@ -20,7 +20,21 @@ export function configureApp(app: NestExpressApplication): void {
   app.useLogger(logger);
 
   app.set('trust proxy', config.get('TRUST_PROXY', { infer: true }));
-  app.use(helmet());
+  // Explicit helmet posture (defaults verified, not blindly inherited):
+  // - crossOriginResourcePolicy 'cross-origin': /storage serves intentionally
+  //   public assets (avatars, question images) that the web origin embeds via
+  //   <img>; same-origin would block them in browsers enforcing CORP.
+  // - CSP is intentionally NOT enabled: the API serves JSON + raw bytes, and
+  //   an incorrect policy risks breaking clients silently. Revisit if the API
+  //   ever serves HTML.
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      referrerPolicy: { policy: 'no-referrer' },
+    }),
+  );
   app.use(cookieParser(config.get('COOKIE_SECRET', { infer: true })));
 
   // Bounded payloads; the frontend never needs larger bodies.

@@ -7,22 +7,32 @@ export const MATCHMAKING_STALE_SECONDS = 120;
 export const CHALLENGE_SWEEP_INTERVAL_SECONDS = 15;
 /** Extra headroom kept on ephemeral live keys beyond duration + grace. */
 export const CHALLENGE_LIVE_RETENTION_BUFFER_SECONDS = 600;
+/** Questions created up front per match; more are appended endlessly. */
+export const CHALLENGE_INITIAL_QUESTION_BATCH = 8;
+/** Top-up trigger: refill when fewer than this many unanswered remain. */
+export const CHALLENGE_TOPUP_BUFFER = 3;
 
-const DEFAULT_CONFIG = {
-  questionCount: 8,
-  durationSeconds: 300,
+const DEFAULTS = {
   minReadingSeconds: 3,
   initialRatingWindow: 150,
   ratingWindowGrowthPerSecond: 4,
   maxRatingWindow: 600,
 } as const;
 
-export function buildChallengeConfig(domainSlug: string): ChallengeConfigDto {
+/** Match length in seconds from the env-configured minutes. */
+export function resolveChallengeDurationSeconds(durationMinutes: number): number {
+  const minutes = Math.min(10, Math.max(1, Math.floor(durationMinutes)));
+  return minutes * 60;
+}
+
+export function buildChallengeConfig(domainSlug: string, durationSeconds: number): ChallengeConfigDto {
   return {
     domainSlug,
     countdownSeconds: CHALLENGE_COUNTDOWN_SECONDS,
     reconnectGraceSeconds: CHALLENGE_RECONNECT_GRACE_SECONDS,
-    ...DEFAULT_CONFIG,
+    questionCount: CHALLENGE_INITIAL_QUESTION_BATCH,
+    durationSeconds,
+    ...DEFAULTS,
   };
 }
 
@@ -43,4 +53,6 @@ export function liveRetentionSeconds(
   );
 }
 
-export const LIVE_RETENTION_SECONDS = liveRetentionSeconds(DEFAULT_CONFIG.durationSeconds);
+export const LIVE_RETENTION_SECONDS = liveRetentionSeconds(
+  resolveChallengeDurationSeconds(10),
+);

@@ -5,9 +5,12 @@ import type { ContestListQuery } from '@apteez/validation';
 import { AppLogger } from '../../common/logger/app-logger';
 import { RedisLockService } from '../../redis/redis-lock.service';
 import { StorageService } from '../../storage/storage.service';
-import { ContestNotFoundError } from './contest.errors';
+import { PointsService } from '../rewards/points.service';
+import { AnalyticsService } from '../analytics/analytics.service';
+import { ContestForbiddenError, ContestNotFoundError } from './contest.errors';
 import { ContestRepository } from './contest.repository';
 import { ContestRatingCalculator } from './contest-rating.calculator';
+import { canTransitionContest } from './contest.util';
 
 export interface ContestRow {
   id: string;
@@ -42,6 +45,16 @@ export interface ParticipantRow {
   effectiveEndAt: Date | null;
   submittedAt: Date | null;
   currentPosition: number;
+}
+
+/**
+ * Management caller: `manage:contests` is enforced at the route (requireArea),
+ * ownership (organizers manage their own, admins any) is enforced per contest.
+ */
+export interface ContestCaller {
+  id: string;
+  roles: string[];
+  permissions: string[];
 }
 
 export interface QuestionRow {
@@ -84,9 +97,12 @@ import {
   ContestStateError,
 } from './contest.errors';
 import { DEFAULT_CONTEST_RATING } from './contest-rating.calculator';
-import { compareContestResults, contestScoreFor } from './contest.util';
+import { contestScoreFor } from './contest.util';
 import type {
+  ContestDraftDto,
   ContestLeaderboardEntryDto,
+  ContestManageDto,
+  ContestManageQuestionDto,
   ContestNavigatorItemDto,
   ContestQuestionViewDto,
   ContestResultDto,
@@ -94,6 +110,11 @@ import type {
   ContestUpsolveDto,
   PaginatedData,
 } from '@apteez/types';
+import type {
+  ContestCreateInput,
+  ContestQuestionAddInput,
+  OrganizerContestPatchInput,
+} from '@apteez/validation';
 import type {
   ContestAnswerInput,
   ContestLeaderboardQuery,
@@ -113,16 +134,20 @@ export class ContestService {
     private readonly ratings: ContestRatingCalculator,
     private readonly lock: RedisLockService,
     private readonly storage: StorageService,
+    private readonly points: PointsService,
+    private readonly analytics: AnalyticsService,
     private readonly logger: AppLogger,
   ) {}
 
   async list(query: ContestListQuery, userId?: string): Promise<PaginatedData<ContestSummaryDto>> {
+    // Advance due statuses first: without this, a contest whose start passed
+    // sits in "upcoming" until somebody opens its detail page.
+    await this.sweepStatuses();
+    // Every contest mixes easy→hard problems, so discovery filters by phase
+    // only — there is no difficulty dimension on contests.
     const where: Prisma.ContestWhereInput = {
       status: { in: ['PUBLISHED', 'REGISTRATION_OPEN', 'LIVE', 'ENDED', 'ARCHIVED'] },
     };
-    if (query.difficulty) {
-      where.difficulty = query.difficulty;
-    }
     if (query.phase === 'live') {
       where.status = 'LIVE';
     } else if (query.phase === 'upcoming') {
@@ -159,7 +184,7 @@ export class ContestService {
   }
 
   async detail(contestId: string, userId?: string): Promise<ContestDetailDto> {
-    const contest = await this.requireContest(contestId);
+    const contest = await this.syncStatus(contestId);
     if (contest.status === 'DRAFT' || contest.status === 'CANCELLED') {
       throw new ContestNotFoundError();
     }
@@ -183,27 +208,57 @@ export class ContestService {
   }
 
   async register(contestId: string, userId: string) {
-    const contest = await this.requireContest(contestId);
+    const contest = await this.syncStatus(contestId);
     this.assertRegistrationOpen(contest);
     const existing = await this.findParticipant(contestId, userId);
     if (existing) {
       return { registered: true, status: existing.status };
     }
-    if (contest.maxParticipants !== null) {
-      const count = await this.prisma.contestParticipant.count({ where: { contestId } });
-      if (count >= contest.maxParticipants) {
-        throw new ContestRegistrationError('This contest is full.');
-      }
-    }
     try {
-      await this.prisma.contestParticipant.create({
-        data: { contestId, userId, status: 'REGISTERED' },
+      await this.prisma.$transaction(async (tx) => {
+        if (contest.maxParticipants !== null) {
+          // Serialize capacity checks on the contest row: without the lock,
+          // two concurrent registrations can both pass the count check and
+          // overbook past maxParticipants (TOCTOU).
+          await tx.$queryRaw`SELECT "id" FROM "contests" WHERE "id" = ${contestId}::uuid FOR UPDATE`;
+          // Count only live seats: terminal/transient rows (e.g. DISQUALIFIED)
+          // must not permanently occupy capacity.
+          const count = await tx.contestParticipant.count({
+            where: {
+              contestId,
+              status: { in: ['REGISTERED', 'ACTIVE', 'SUBMITTED', 'AUTO_SUBMITTED'] },
+            },
+          });
+          if (count >= contest.maxParticipants) {
+            throw new ContestRegistrationError('This contest is full.');
+          }
+        }
+        await tx.contestParticipant.create({
+          data: { contestId, userId, status: 'REGISTERED' },
+        });
       });
     } catch (error) {
+      if (error instanceof ContestRegistrationError) {
+        throw error;
+      }
       if (this.isUniqueViolation(error)) {
         return { registered: true, status: 'REGISTERED' };
       }
-      throw error;
+      if (contest.maxParticipants === null) {
+        // No capacity check to serialize: a pooler-aborted transaction can
+        // safely fall back to a plain idempotent create instead of 500ing.
+        try {
+          await this.prisma.contestParticipant.create({
+            data: { contestId, userId, status: 'REGISTERED' },
+          });
+        } catch (fallback) {
+          if (!this.isUniqueViolation(fallback)) {
+            throw error;
+          }
+        }
+        return { registered: true, status: 'REGISTERED' };
+      }
+      throw new ContestRegistrationError('Registration hit a temporary issue. Try again shortly.');
     }
     return { registered: true, status: 'REGISTERED' };
   }
@@ -220,8 +275,333 @@ export class ContestService {
     return { registered: false };
   }
 
-  async start(contestId: string, userId: string): Promise<ContestSessionDto> {
+  // ─── Organizer management (DRAFT → publish flow) ──────────────────────────
+
+  /**
+   * Step 1 of creation: the contest format (question count + length first).
+   * Always lands in DRAFT; questions are attached one by one afterwards and
+   * publish is a separate, validated transition.
+   */
+  async createContest(caller: ContestCaller, input: ContestCreateInput): Promise<ContestManageDto> {
+    const slug = await this.uniqueSlug(input.title);
+    const contest = await this.prisma.contest.create({
+      data: {
+        title: input.title,
+        slug,
+        description: input.description ?? null,
+        rules: input.rules ?? null,
+        difficulty: input.difficulty,
+        status: 'DRAFT',
+        questionCount: input.questionCount,
+        durationSeconds: input.durationMinutes * 60,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+        registrationOpensAt: input.registrationOpensAt ?? null,
+        registrationClosesAt: input.registrationClosesAt ?? null,
+        maxParticipants: input.maxParticipants ?? null,
+        resultVisibility: input.resultVisibility,
+        revealAnswersLive: input.revealAnswersLive,
+        createdById: caller.id,
+      },
+      select: { id: true },
+    });
+    this.logger.log(
+      `contest.created id=${contest.id} by=${caller.id} questions=${input.questionCount} durationMin=${input.durationMinutes}`,
+      'Contest',
+    );
+    return this.manageView(contest.id, caller);
+  }
+
+  /** Full manage view for the wizard: format + attached questions + blockers. */
+  async manageView(contestId: string, caller: ContestCaller): Promise<ContestManageDto> {
     const contest = await this.requireContest(contestId);
+    this.assertCanManage(contest, caller);
+    return this.toManage(contest);
+  }
+
+  /**
+   * Resume list: unfinished DRAFT setups the caller may manage. Admins see
+   * every draft; plain creators see only their own. Newest first so the
+   * setup just left off is always on top.
+   */
+  async listDrafts(caller: ContestCaller): Promise<ContestDraftDto[]> {
+    const elevated =
+      caller.permissions.includes('manage:platform') || caller.roles.includes('admin');
+    const rows = await this.prisma.contest.findMany({
+      where: {
+        status: 'DRAFT',
+        ...(elevated ? {} : { createdById: caller.id }),
+      },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        title: true,
+        questionCount: true,
+        durationSeconds: true,
+        updatedAt: true,
+        _count: { select: { questions: true } },
+      },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      questionCount: row.questionCount,
+      addedCount: row._count.questions,
+      durationMinutes: Math.round(row.durationSeconds / 60),
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+  }
+
+  /** Edit the format while still a DRAFT (schedule, size, copy). */
+  async updateDraft(
+    contestId: string,
+    caller: ContestCaller,
+    input: OrganizerContestPatchInput,
+  ): Promise<ContestManageDto> {
+    const contest = await this.requireDraft(contestId, caller);
+    const added = await this.prisma.contestQuestion.count({ where: { contestId } });
+    if (input.questionCount !== undefined && input.questionCount < added) {
+      throw new ContestStateError(
+        `This contest already has ${added} questions — the target cannot drop below that.`,
+      );
+    }
+    if (
+      input.maxParticipants !== undefined &&
+      input.maxParticipants !== null &&
+      input.maxParticipants < contest._count.participants
+    ) {
+      throw new ContestStateError(
+        `Capacity cannot drop below the ${contest._count.participants} already registered.`,
+      );
+    }
+    await this.prisma.contest.update({
+      where: { id: contestId },
+      data: {
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.rules !== undefined ? { rules: input.rules } : {}),
+        ...(input.difficulty !== undefined ? { difficulty: input.difficulty } : {}),
+        ...(input.questionCount !== undefined ? { questionCount: input.questionCount } : {}),
+        ...(input.durationMinutes !== undefined
+          ? { durationSeconds: input.durationMinutes * 60 }
+          : {}),
+        ...(input.startsAt ? { startsAt: input.startsAt } : {}),
+        ...(input.endsAt ? { endsAt: input.endsAt } : {}),
+        ...(input.registrationOpensAt !== undefined
+          ? { registrationOpensAt: input.registrationOpensAt }
+          : {}),
+        ...(input.registrationClosesAt !== undefined
+          ? { registrationClosesAt: input.registrationClosesAt }
+          : {}),
+        ...(input.maxParticipants !== undefined ? { maxParticipants: input.maxParticipants } : {}),
+        ...(input.resultVisibility !== undefined
+          ? { resultVisibility: input.resultVisibility }
+          : {}),
+        ...(input.revealAnswersLive !== undefined
+          ? { revealAnswersLive: input.revealAnswersLive }
+          : {}),
+      },
+    });
+    return this.manageView(contestId, caller);
+  }
+
+  /**
+   * Step 2 of creation: attach one published problem. Positions always append
+   * in order (0, 1, 2…), so the wizard fills slot N before slot N+1 exists —
+   * exactly the one-by-one flow, with no gaps to corrupt navigation.
+   */
+  async addQuestion(
+    contestId: string,
+    caller: ContestCaller,
+    input: ContestQuestionAddInput,
+  ): Promise<ContestManageDto> {
+    const contest = await this.requireDraft(contestId, caller);
+    const problem = await this.prisma.problem.findUnique({
+      where: { id: input.problemId },
+      select: { id: true, status: true },
+    });
+    if (!problem || problem.status !== 'PUBLISHED') {
+      throw new ContestQuestionError('Only published problems can be added to a contest.');
+    }
+    const added = await this.prisma.contestQuestion.count({ where: { contestId } });
+    if (added >= contest.questionCount) {
+      throw new ContestStateError(
+        `This contest needs exactly ${contest.questionCount} questions — remove one first to swap it.`,
+      );
+    }
+    if (input.position !== undefined && input.position !== added) {
+      throw new ContestQuestionError(
+        `Questions fill in order — slot ${added + 1} of ${contest.questionCount} is next.`,
+      );
+    }
+    try {
+      await this.prisma.contestQuestion.create({
+        data: { contestId, problemId: input.problemId, position: added },
+      });
+    } catch (error) {
+      if (this.isUniqueViolation(error)) {
+        throw new ContestQuestionError('That problem is already in this contest.');
+      }
+      throw error;
+    }
+    return this.manageView(contestId, caller);
+  }
+
+  /** Detach a question from a DRAFT; later slots collapse to stay dense. */
+  async removeQuestion(
+    contestId: string,
+    caller: ContestCaller,
+    questionId: string,
+  ): Promise<ContestManageDto> {
+    await this.requireDraft(contestId, caller);
+    const row = await this.prisma.contestQuestion.findFirst({
+      where: { id: questionId, contestId },
+      select: { id: true, position: true },
+    });
+    if (!row) {
+      throw new ContestQuestionError();
+    }
+    await this.prisma.contestQuestion.delete({ where: { id: row.id } });
+    await this.prisma.contestQuestion.updateMany({
+      where: { contestId, position: { gt: row.position } },
+      data: { position: { decrement: 1 } },
+    });
+    return this.manageView(contestId, caller);
+  }
+
+  /**
+   * Publish a completed DRAFT. Lands in REGISTRATION_OPEN when the window is
+   * already open, else PUBLISHED — the lazy lifecycle takes it LIVE at
+   * startsAt and closes (rank + rate) at endsAt with no cron needed.
+   */
+  async publishContest(contestId: string, caller: ContestCaller): Promise<ContestManageDto> {
+    const contest = await this.requireDraft(contestId, caller);
+    const view = await this.toManage(contest);
+    if (!view.canPublish) {
+      throw new ContestStateError(
+        view.publishBlockers[0] ?? 'This contest is not ready to publish.',
+      );
+    }
+    const now = new Date();
+    const target =
+      contest.registrationOpensAt && now >= contest.registrationOpensAt
+        ? 'REGISTRATION_OPEN'
+        : 'PUBLISHED';
+    if (!canTransitionContest('DRAFT', target)) {
+      throw new ContestStateError('This contest cannot be published from its current state.');
+    }
+    await this.prisma.contest.update({
+      where: { id: contestId },
+      data: { status: target, publishedAt: now },
+    });
+    this.logger.log(`contest.published id=${contestId} by=${caller.id} -> ${target}`, 'Contest');
+    return this.manageView(contestId, caller);
+  }
+
+  private async requireDraft(contestId: string, caller: ContestCaller): Promise<ContestRow> {
+    const contest = await this.requireContest(contestId);
+    this.assertCanManage(contest, caller);
+    if (contest.status !== 'DRAFT') {
+      throw new ContestStateError('Only draft contests can be edited.');
+    }
+    return contest;
+  }
+
+  private assertCanManage(contest: { createdById: string | null }, caller: ContestCaller): void {
+    if (caller.permissions.includes('manage:platform')) {
+      return;
+    }
+    if (caller.roles.includes('admin')) {
+      return;
+    }
+    // Creators manage their own contests only.
+    if (contest.createdById && contest.createdById === caller.id) {
+      return;
+    }
+    throw new ContestForbiddenError();
+  }
+
+  private async uniqueSlug(title: string): Promise<string> {
+    const base =
+      title
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 50) || 'contest';
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const slug = `${base}-${Date.now().toString(36)}${attempt > 0 ? `-${attempt}` : ''}`;
+      const existing = await this.prisma.contest.findUnique({
+        where: { slug },
+        select: { id: true },
+      });
+      if (!existing) {
+        return slug;
+      }
+    }
+    return `${base}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)}`;
+  }
+
+  private async toManage(contest: ContestRow): Promise<ContestManageDto> {
+    const rows = await this.prisma.contestQuestion.findMany({
+      where: { contestId: contest.id },
+      orderBy: { position: 'asc' },
+      select: {
+        id: true,
+        position: true,
+        points: true,
+        problem: { select: { id: true, title: true, difficulty: true } },
+      },
+    });
+    const questions: ContestManageQuestionDto[] = rows.map((row) => ({
+      questionId: row.id,
+      position: row.position,
+      points: row.points,
+      problem: row.problem,
+    }));
+    const addedCount = questions.length;
+    const now = new Date();
+    const publishBlockers: string[] = [];
+    if (addedCount < contest.questionCount) {
+      const missing = contest.questionCount - addedCount;
+      publishBlockers.push(
+        `Add ${missing} more question${missing === 1 ? '' : 's'} (${addedCount} of ${contest.questionCount}).`,
+      );
+    }
+    if (contest.endsAt <= contest.startsAt) {
+      publishBlockers.push('The end must be after the start.');
+    } else if (contest.startsAt <= now) {
+      publishBlockers.push('The start time is in the past — move the schedule forward.');
+    }
+    return {
+      id: contest.id,
+      title: contest.title,
+      description: contest.description,
+      rules: contest.rules,
+      status: contest.status,
+      difficulty: contest.difficulty,
+      questionCount: contest.questionCount,
+      addedCount,
+      durationSeconds: contest.durationSeconds,
+      durationMinutes: Math.round(contest.durationSeconds / 60),
+      startsAt: contest.startsAt.toISOString(),
+      endsAt: contest.endsAt.toISOString(),
+      registrationOpensAt: contest.registrationOpensAt?.toISOString() ?? null,
+      registrationClosesAt: contest.registrationClosesAt?.toISOString() ?? null,
+      maxParticipants: contest.maxParticipants,
+      participantCount: contest._count.participants,
+      resultVisibility: contest.resultVisibility,
+      revealAnswersLive: contest.revealAnswersLive,
+      canPublish: contest.status === 'DRAFT' && publishBlockers.length === 0,
+      publishBlockers,
+      questions,
+      createdById: contest.createdById,
+      ratingStatus: contest.ratingStatus,
+    };
+  }
+
+  async start(contestId: string, userId: string): Promise<ContestSessionDto> {
+    const contest = await this.syncStatus(contestId);
     this.assertParticipable(contest);
     const participant = await this.requireParticipant(contestId, userId);
     const now = new Date();
@@ -257,7 +637,7 @@ export class ContestService {
   }
 
   async session(contestId: string, userId: string): Promise<ContestSessionDto> {
-    const contest = await this.requireContest(contestId);
+    const contest = await this.syncStatus(contestId);
     const participant = await this.requireParticipant(contestId, userId);
     if (!participant.startedAt || !participant.effectiveEndAt) {
       throw new ContestNotRegisteredError('Enter the contest to start your session.');
@@ -410,6 +790,7 @@ export class ContestService {
   }
 
   async submitPreview(contestId: string, userId: string): Promise<ContestSubmitPreviewDto> {
+    await this.syncStatus(contestId);
     const participant = await this.requireParticipant(contestId, userId);
     const totalQuestions = await this.prisma.contestQuestion.count({ where: { contestId } });
     const counts = await this.answerCounts(participant.id);
@@ -460,6 +841,9 @@ export class ContestService {
   }
 
   async result(contestId: string, userId: string): Promise<ContestResultDto> {
+    // Sync first: opening your result after endsAt closes the contest, so
+    // the rating below is already settled instead of perpetually pending.
+    await this.syncStatus(contestId);
     const participant = await this.requireParticipant(contestId, userId);
     const existing = await this.prisma.contestResult.findUnique({
       where: { participantId: participant.id },
@@ -475,7 +859,7 @@ export class ContestService {
     query: ContestLeaderboardQuery,
     userId?: string,
   ): Promise<PaginatedData<ContestLeaderboardEntryDto>> {
-    const contest = await this.requireContest(contestId);
+    const contest = await this.syncStatus(contestId);
     const now = new Date();
     const live = now < contest.endsAt && contest.status === 'LIVE';
     const total = await this.prisma.contestResult.count({ where: { contestId } });
@@ -489,11 +873,20 @@ export class ContestService {
       },
     });
     const offset = (query.page - 1) * query.pageSize;
+    // Rating deltas ride along (single query) — null until ratings settle.
+    const histories = await this.prisma.contestRatingHistory.findMany({
+      where: { contestId, userId: { in: rows.map((row) => row.userId) } },
+      select: { userId: true, ratingChange: true },
+    });
+    const changeByUser = new Map(
+      histories.map((history) => [history.userId, history.ratingChange]),
+    );
     return {
       items: rows.map((row, index) => ({
         rank: row.rank ?? offset + index + 1,
         userId: row.userId,
         username: live ? null : (row.user.username ?? null),
+        ratingChange: live ? null : (changeByUser.get(row.userId) ?? null),
         displayName: live ? `Participant ${offset + index + 1}` : row.user.displayName,
         avatarKey: live ? null : row.user.avatarKey,
         institution: live ? null : (row.user.institution ?? null),
@@ -512,8 +905,56 @@ export class ContestService {
     };
   }
 
+  /** Global contest-rating leaderboard: overall performance across contests. */
+  async ratingLeaderboard(
+    institution: string | undefined,
+    limit: number,
+  ): Promise<
+    Array<{
+      rank: number;
+      userId: string;
+      username: string | null;
+      displayName: string;
+      avatarKey: string | null;
+      institution: string | null;
+      rating: number;
+      tier: 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED' | 'EXPERT' | 'ELITE';
+      contestsPlayed: number;
+      bestRank: number | null;
+    }>
+  > {
+    const rows = await this.prisma.contestRating.findMany({
+      where: institution ? { user: { institution } } : {},
+      orderBy: [{ rating: 'desc' }, { userId: 'asc' }],
+      take: limit,
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarKey: true,
+            institution: true,
+          },
+        },
+      },
+    });
+    return rows.map((row, index) => ({
+      rank: index + 1,
+      userId: row.userId,
+      username: row.user.username,
+      displayName: row.user.displayName,
+      avatarKey: row.user.avatarKey,
+      institution: row.user.institution,
+      rating: row.rating,
+      tier: this.ratings.tierFor(row.rating),
+      contestsPlayed: row.contestsPlayed,
+      bestRank: row.bestRank,
+    }));
+  }
+
   async upsolve(contestId: string, userId: string): Promise<ContestUpsolveDto> {
-    const contest = await this.requireContest(contestId);
+    const contest = await this.syncStatus(contestId);
     if (
       contest.status !== 'ENDED' &&
       contest.status !== 'ARCHIVED' &&
@@ -582,6 +1023,145 @@ export class ContestService {
       async () => this.runClose(contestId),
     );
     return locked ?? { ranked: 0, ratingsApplied: false };
+  }
+
+  /**
+   * Discovery-time lifecycle sweep. Status flips are awaited (two cheap bulk
+   * writes) so the live tab is correct on THIS response; ended-contest closes
+   * (rank + rate) run in the background, bounded to the 5 most overdue —
+   * syncStatus converges them on detail reads regardless.
+   */
+  private async sweepStatuses(): Promise<void> {
+    const now = new Date();
+    try {
+      await this.prisma.contest.updateMany({
+        where: {
+          status: 'PUBLISHED',
+          registrationOpensAt: { lte: now },
+          startsAt: { gt: now },
+        },
+        data: { status: 'REGISTRATION_OPEN' },
+      });
+      await this.prisma.contest.updateMany({
+        where: {
+          status: { in: ['PUBLISHED', 'REGISTRATION_OPEN'] },
+          startsAt: { lte: now },
+          endsAt: { gt: now },
+        },
+        data: { status: 'LIVE' },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `contest.sweep-flip-failed ${error instanceof Error ? error.message : String(error)}`,
+        'Contest',
+      );
+      return;
+    }
+    let overdue: Array<{ id: string }> = [];
+    try {
+      overdue = await this.prisma.contest.findMany({
+        where: {
+          status: { in: ['PUBLISHED', 'REGISTRATION_OPEN', 'LIVE'] },
+          endsAt: { lte: now },
+        },
+        select: { id: true },
+        orderBy: { endsAt: 'asc' },
+        take: 5,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `contest.sweep-scan-failed ${error instanceof Error ? error.message : String(error)}`,
+        'Contest',
+      );
+      return;
+    }
+    if (overdue.length > 0) {
+      void (async () => {
+        for (const row of overdue) {
+          await this.syncStatus(row.id).catch(() => undefined);
+        }
+      })();
+    }
+  }
+
+  /**
+   * Manual repair for stuck ratings (FAILED after retries, or PENDING long
+   * after the end). Re-running is safe: ranks recompute deterministically,
+   * rating writes are conditional on the expected `before` value, and the
+   * history unique makes replays converge instead of double-applying.
+   */
+  async retryRatings(
+    contestId: string,
+    caller: ContestCaller,
+  ): Promise<{ ranked: number; ratingsApplied: boolean; ratingStatus: string }> {
+    const contest = await this.requireContest(contestId);
+    this.assertCanManage(contest, caller);
+    if (new Date() < contest.endsAt && contest.status !== 'ENDED') {
+      throw new ContestStateError('Ratings settle after the contest ends.');
+    }
+    const outcome = await this.closeContest(contestId);
+    const fresh = await this.requireContest(contestId);
+    return { ...outcome, ratingStatus: fresh.ratingStatus };
+  }
+
+  /**
+   * Lazy lifecycle driver — no cron needed (free-tier friendly). Every
+   * participant-facing read funnels through here, so statuses move on time:
+   * PUBLISHED → REGISTRATION_OPEN → LIVE at startsAt, and close (ENDED +
+   * rank + rate) at endsAt. Idempotent and lock-guarded; terminal states
+   * (DRAFT/CANCELLED/ARCHIVED/ENDED) never move except a FAILED-rating retry.
+   */
+  private async syncStatus(contestId: string): Promise<ContestRow> {
+    const contest = await this.requireContest(contestId);
+    const now = new Date();
+    if (contest.status === 'ENDED' || contest.status === 'ARCHIVED') {
+      // A failed rating step gets retried lazily (bounded attempts), so one
+      // transient outage at close time never bricks ratings permanently.
+      if (contest.status === 'ENDED' && contest.ratingStatus === 'FAILED') {
+        const attempts = await this.prisma.contest
+          .findUnique({ where: { id: contestId }, select: { ratingAttempts: true } })
+          .then((row) => row?.ratingAttempts ?? 99);
+        if (attempts < 3) {
+          await this.closeContest(contestId).catch(() => undefined);
+          return this.requireContest(contestId);
+        }
+      }
+      return contest;
+    }
+    if (contest.status === 'DRAFT' || contest.status === 'CANCELLED') {
+      return contest;
+    }
+    if (now >= contest.endsAt) {
+      await this.closeContest(contestId).catch(() => undefined);
+      const closed = await this.requireContest(contestId);
+      if (canTransitionContest(closed.status, 'ENDED')) {
+        await this.prisma.contest.update({
+          where: { id: contestId },
+          data: { status: 'ENDED', endedAt: now },
+        });
+        return this.requireContest(contestId);
+      }
+      return closed;
+    }
+    let next: ContestRow['status'] | null = null;
+    if (
+      contest.status === 'PUBLISHED' &&
+      contest.registrationOpensAt &&
+      now >= contest.registrationOpensAt
+    ) {
+      next = 'REGISTRATION_OPEN';
+    }
+    if (
+      (contest.status === 'PUBLISHED' || contest.status === 'REGISTRATION_OPEN') &&
+      now >= contest.startsAt
+    ) {
+      next = 'LIVE';
+    }
+    if (next && canTransitionContest(contest.status, next)) {
+      await this.prisma.contest.update({ where: { id: contestId }, data: { status: next } });
+      return this.requireContest(contestId);
+    }
+    return contest;
   }
 
   async myRating(userId: string) {
@@ -678,49 +1258,49 @@ export class ContestService {
     const unanswered = Math.max(0, questions.length - solved - wrong);
     const score = contestScoreFor(solved);
     const status = auto ? 'AUTO_SUBMITTED' : 'SUBMITTED';
+    // One retry for transient pooler aborts (P2028): answers are already
+    // persisted per-question, so replaying finalization converges via the
+    // participant/result uniques instead of losing the submission.
     let result;
     try {
-      result = await this.prisma.$transaction(async (tx) => {
-        await tx.contestParticipant.update({
-          where: { id: participant.id },
-          data: { status, submittedAt: now, lastSeenAt: now },
-        });
-        for (const q of questions) {
-          const ok = correctness.get(q.id);
-          if (ok === undefined) {
-            continue;
-          }
-          await tx.contestAnswer.updateMany({
-            where: { participantId: participant.id, contestQuestionId: q.id },
-            data: { isCorrect: ok },
-          });
-        }
-        return tx.contestResult.create({
-          data: {
-            contestId,
-            participantId: participant.id,
-            userId,
-            solvedCount: solved,
-            wrongCount: wrong,
-            unansweredCount: unanswered,
-            score,
-            completionSeconds,
-            status: 'COMPLETED',
-            finalizedAt: now,
-          },
-        });
-      });
+      result = await this.persistFinalization(
+        contestId,
+        participant,
+        userId,
+        { status, submittedAt: now },
+        questions,
+        correctness,
+        { solved, wrong, unanswered, score, completionSeconds, finalizedAt: now },
+      );
     } catch (error) {
       if (this.isUniqueViolation(error)) {
-        const retry = await this.prisma.contestResult.findUnique({
+        return this.existingResult(contestId, participant, error);
+      }
+      try {
+        result = await this.persistFinalization(
+          contestId,
+          participant,
+          userId,
+          { status, submittedAt: now },
+          questions,
+          correctness,
+          { solved, wrong, unanswered, score, completionSeconds, finalizedAt: now },
+        );
+      } catch (retryError) {
+        if (this.isUniqueViolation(retryError)) {
+          return this.existingResult(contestId, participant, retryError);
+        }
+        const raced = await this.prisma.contestResult.findUnique({
           where: { participantId: participant.id },
         });
-        if (!retry) {
-          throw error;
+        if (raced) {
+          const refreshed = await this.findParticipant(contestId, userId);
+          return this.toResult(contestId, refreshed ?? participant, raced);
         }
-        return this.toResult(contestId, participant, retry);
+        throw new ContestStateError(
+          'Submission hit a temporary issue. Your answers are saved — try submitting again.',
+        );
       }
-      throw error;
     }
     await this.assignRanks(contestId).catch((error) =>
       this.logger.warn(
@@ -729,22 +1309,101 @@ export class ContestService {
       ),
     );
     const refreshed = await this.findParticipant(contestId, userId);
+    // Activity reward for submitting. Best-effort: never rolls back the result.
+    void this.points
+      .awardTrigger({
+        userId,
+        trigger: 'contest-participate',
+        sourceType: 'contest',
+        sourceId: contestId,
+      })
+      .catch(() => undefined);
+    // Fresh result only (race replays return above without recording).
+    void this.analytics.record('contest.submitted', { userId, metadata: { contestId } });
     return this.toResult(contestId, refreshed ?? participant, result);
   }
 
-  private async assignRanks(contestId: string): Promise<number> {
-    const rows = await this.prisma.contestResult.findMany({
-      where: { contestId },
-      select: { id: true, userId: true, score: true, solvedCount: true, completionSeconds: true },
-    });
-    const ordered = [...rows].sort(compareContestResults);
-    for (let index = 0; index < ordered.length; index += 1) {
-      await this.prisma.contestResult.update({
-        where: { id: ordered[index]!.id },
-        data: { rank: index + 1 },
+  /** Single finalization write unit (participant + answers + result). */
+  private async persistFinalization(
+    contestId: string,
+    participant: ParticipantRow,
+    userId: string,
+    head: { status: 'SUBMITTED' | 'AUTO_SUBMITTED'; submittedAt: Date },
+    questions: QuestionRow[],
+    correctness: Map<string, boolean | null>,
+    result: {
+      solved: number;
+      wrong: number;
+      unanswered: number;
+      score: number;
+      completionSeconds: number;
+      finalizedAt: Date;
+    },
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.contestParticipant.update({
+        where: { id: participant.id },
+        data: { status: head.status, submittedAt: head.submittedAt, lastSeenAt: head.submittedAt },
       });
+      for (const q of questions) {
+        const ok = correctness.get(q.id);
+        if (ok === undefined) {
+          continue;
+        }
+        await tx.contestAnswer.updateMany({
+          where: { participantId: participant.id, contestQuestionId: q.id },
+          data: { isCorrect: ok },
+        });
+      }
+      return tx.contestResult.create({
+        data: {
+          contestId,
+          participantId: participant.id,
+          userId,
+          solvedCount: result.solved,
+          wrongCount: result.wrong,
+          unansweredCount: result.unanswered,
+          score: result.score,
+          completionSeconds: result.completionSeconds,
+          status: 'COMPLETED',
+          finalizedAt: result.finalizedAt,
+        },
+      });
+    });
+  }
+
+  /** A unique-violation means a concurrent attempt won: return its result. */
+  private async existingResult(
+    contestId: string,
+    participant: ParticipantRow,
+    error: unknown,
+  ): Promise<ContestResultDto> {
+    const retry = await this.prisma.contestResult.findUnique({
+      where: { participantId: participant.id },
+    });
+    if (!retry) {
+      throw error;
     }
-    return ordered.length;
+    return this.toResult(contestId, participant, retry);
+  }
+
+  private async assignRanks(contestId: string): Promise<number> {
+    // Single set-based statement instead of one UPDATE per participant.
+    // ROW_NUMBER order mirrors compareContestResults exactly (score DESC,
+    // solvedCount DESC, completionSeconds ASC, userId ASC — UUID text, so
+    // SQL collation agrees with the JS tiebreak).
+    const ranked = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      WITH ranked AS (
+        SELECT "id", ROW_NUMBER() OVER (
+          ORDER BY "score" DESC, "solvedCount" DESC, "completionSeconds" ASC, "userId" ASC
+        ) AS rn
+        FROM "contest_results"
+        WHERE "contestId" = ${contestId}::uuid
+      )
+      UPDATE "contest_results" AS r SET "rank" = ranked.rn
+      FROM ranked WHERE r."id" = ranked."id"
+      RETURNING r."id"`;
+    return ranked.length;
   }
 
   private async processRatings(contestId: string): Promise<boolean> {
@@ -754,11 +1413,22 @@ export class ContestService {
     }
     const results = await this.prisma.contestResult.findMany({
       where: { contestId, rank: { not: null } },
-      select: { userId: true, participantId: true, rank: true, score: true },
+      select: {
+        userId: true,
+        participantId: true,
+        rank: true,
+        score: true,
+        completionSeconds: true,
+      },
       orderBy: { rank: 'asc' },
     });
     if (results.length === 0) {
-      return false;
+      // Nobody finished — nothing to rate, but the pipeline is done.
+      // (Previously this returned false forever, stranding ratingStatus.)
+      await this.prisma.contest
+        .update({ where: { id: contestId }, data: { ratingStatus: 'COMPLETED' } })
+        .catch(() => undefined);
+      return true;
     }
     await this.prisma.contest.update({
       where: { id: contestId },
@@ -773,42 +1443,102 @@ export class ContestService {
       ratings.length > 0
         ? ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length
         : DEFAULT_CONTEST_RATING;
+    // Pace baseline: finishers faster than the field median earn a bounded
+    // speed bonus on top of their rank performance (and vice versa).
+    const times = results
+      .map((r) => r.completionSeconds)
+      .filter((t): t is number => typeof t === 'number' && t >= 0)
+      .sort((a, b) => a - b);
+    const medianSeconds =
+      times.length > 0 ? (times[Math.floor((times.length - 1) / 2)] as number) : null;
+    // No interactive transaction: the pooler kills those with P2028. Each
+    // side is a conditional single-statement write (moves only from the
+    // expected `before` value) plus the history unique — a retry converges
+    // instead of double-applying.
     for (const row of results) {
+      const rank = row.rank ?? results.length;
+      const historyKey = { contestId_userId: { contestId, userId: row.userId } };
+      const already = await this.prisma.contestRatingHistory.findUnique({
+        where: historyKey,
+        select: { id: true },
+      });
+      if (already) {
+        continue;
+      }
       const before = byUser.get(row.userId) ?? DEFAULT_CONTEST_RATING;
       const calc = this.ratings.calculate({
         ratingBefore: before,
-        rank: row.rank ?? results.length,
+        rank,
         fieldSize: results.length,
         fieldAverage: average,
+        completionSeconds: row.completionSeconds,
+        fieldMedianSeconds: medianSeconds,
       });
-      try {
-        await this.prisma.$transaction(async (tx) => {
-          await tx.contestRating.upsert({
-            where: { userId: row.userId },
-            update: {},
-            create: { userId: row.userId, rating: DEFAULT_CONTEST_RATING },
-          });
-          await tx.contestRating.update({
-            where: { userId: row.userId },
+      const moved = await this.prisma.contestRating.updateMany({
+        where: { userId: row.userId, rating: before },
+        data: {
+          rating: calc.ratingAfter,
+          contestsPlayed: { increment: 1 },
+          lastPlayedAt: new Date(),
+        },
+      });
+      if (moved.count === 0) {
+        // Missing row (never played) or a concurrent move: create-then-move,
+        // else verify convergence, else fail loudly instead of corrupting.
+        const current = await this.prisma.contestRating.findUnique({
+          where: { userId: row.userId },
+          select: { rating: true },
+        });
+        if (!current) {
+          try {
+            await this.prisma.contestRating.create({
+              data: { userId: row.userId, rating: before },
+            });
+          } catch (error) {
+            if (!this.isUniqueViolation(error)) {
+              throw error;
+            }
+          }
+          const retry = await this.prisma.contestRating.updateMany({
+            where: { userId: row.userId, rating: before },
             data: {
               rating: calc.ratingAfter,
               contestsPlayed: { increment: 1 },
               lastPlayedAt: new Date(),
             },
           });
-          await tx.contestRatingHistory.create({
-            data: {
-              userId: row.userId,
-              contestId,
-              participantId: row.participantId,
-              ratingBefore: calc.ratingBefore,
-              ratingAfter: calc.ratingAfter,
-              ratingChange: calc.ratingChange,
-              rank: row.rank ?? results.length,
-              score: row.score,
-              fieldSize: results.length,
-            },
+          if (retry.count === 0) {
+            throw new Error(`contest rating lost race user=${row.userId} contest=${contestId}`);
+          }
+        } else if (current.rating === calc.ratingAfter) {
+          const replayed = await this.prisma.contestRatingHistory.findUnique({
+            where: historyKey,
+            select: { id: true },
           });
+          if (replayed) {
+            continue;
+          }
+          // A prior attempt moved the rating but crashed before the history
+          // row: replay just the insert with the same deterministic values.
+        } else {
+          throw new Error(
+            `contest rating moved concurrently user=${row.userId} contest=${contestId}`,
+          );
+        }
+      }
+      try {
+        await this.prisma.contestRatingHistory.create({
+          data: {
+            userId: row.userId,
+            contestId,
+            participantId: row.participantId,
+            ratingBefore: calc.ratingBefore,
+            ratingAfter: calc.ratingAfter,
+            ratingChange: calc.ratingChange,
+            rank,
+            score: row.score,
+            fieldSize: results.length,
+          },
         });
       } catch (error) {
         if (!this.isUniqueViolation(error)) {
@@ -816,20 +1546,18 @@ export class ContestService {
         }
       }
     }
-    for (const row of results) {
-      const history = await this.prisma.contestRatingHistory.findMany({
-        where: { userId: row.userId },
-        select: { rank: true },
-      });
-      const best =
-        history.length > 0 ? Math.min(...history.map((h) => h.rank)) : (row.rank ?? null);
-      if (best !== null) {
-        await this.prisma.contestRating.update({
-          where: { userId: row.userId },
-          data: { bestRank: best },
-        });
-      }
-    }
+    // Single set-based best-rank refresh across the whole field instead of
+    // one history read + one update per participant.
+    await this.prisma.$queryRaw`
+      UPDATE "contest_ratings" AS cr
+      SET "bestRank" = LEAST(COALESCE(cr."bestRank", 2147483647), ranked.minrank)
+      FROM (
+        SELECT "userId", MIN("rank") AS minrank
+        FROM "contest_rating_history"
+        WHERE "userId" = ANY(${results.map((row) => row.userId)}::uuid[])
+        GROUP BY "userId"
+      ) AS ranked
+      WHERE cr."userId" = ranked."userId"`;
     await this.prisma.contest.update({
       where: { id: contestId },
       data: { ratingStatus: 'COMPLETED', ratingProcessedAt: new Date() },
@@ -869,7 +1597,7 @@ export class ContestService {
   }
 
   private async requireAnswerable(contestId: string, userId: string, questionId: string) {
-    const contest = await this.requireContest(contestId);
+    const contest = await this.syncStatus(contestId);
     this.assertParticipable(contest);
     const participant = await this.requireParticipant(contestId, userId);
     if (participant.status === 'SUBMITTED' || participant.status === 'AUTO_SUBMITTED') {

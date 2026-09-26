@@ -133,14 +133,17 @@ describe('Auth (e2e)', () => {
     expect(Object.keys(me.body.data).sort()).toEqual(
       [
         'avatarKey',
+        'bio',
         'country',
         'displayName',
         'email',
         'id',
         'institution',
         'isActive',
+        'isPrivate',
         'permissions',
         'roles',
+        'timezone',
         'username',
       ].sort(),
     );
@@ -235,12 +238,10 @@ describe('Auth (e2e)', () => {
   it('enforces role and permission guards end to end', async () => {
     const member = freshAccount();
     const admin = freshAccount();
-    const moderator = freshAccount();
-    for (const account of [member, admin, moderator]) {
+    for (const account of [member, admin]) {
       await request(app.getHttpServer()).post('/api/v1/auth/register').send(account).expect(201);
     }
     await grantRole(admin.email, 'admin');
-    await grantRole(moderator.email, 'moderator');
 
     const loginAs = async (email: string, password: string) => {
       const agent = request.agent(app.getHttpServer());
@@ -249,14 +250,13 @@ describe('Auth (e2e)', () => {
     };
     const memberAgent = await loginAs(member.email, member.password);
     const adminAgent = await loginAs(admin.email, admin.password);
-    const moderatorAgent = await loginAs(moderator.email, moderator.password);
 
     await request(app.getHttpServer()).get('/api/v1/test-rbac/admin').expect(401);
     await memberAgent.get('/api/v1/test-rbac/admin').expect(403);
     await adminAgent.get('/api/v1/test-rbac/admin').expect(200);
 
     await memberAgent.get('/api/v1/test-rbac/review').expect(403);
-    const review = await moderatorAgent.get('/api/v1/test-rbac/review').expect(200);
+    const review = await adminAgent.get('/api/v1/test-rbac/review').expect(200);
     expect(review.body).toEqual({ success: true, data: { area: 'review' } });
   }, 60_000);
 });

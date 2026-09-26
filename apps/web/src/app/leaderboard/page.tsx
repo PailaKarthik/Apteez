@@ -10,7 +10,7 @@ export default function LeaderboardPage(): React.JSX.Element {
     <PageStack>
       <PageHeader
         title="Leaderboard"
-        description="Per-domain challenge ratings, ranked globally or by university."
+        description="Contest rating plus challenge ratings across the 7 aptitude sections."
       />
       <LeaderboardBoard />
     </PageStack>

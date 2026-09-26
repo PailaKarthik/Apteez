@@ -1,6 +1,10 @@
 -- CreateExtension
 CREATE EXTENSION IF NOT EXISTS "citext";
 
+-- The username column is added by the foundation migration, which sorts after
+-- this one; ensure it exists first so fresh databases apply cleanly in order.
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "username" TEXT;
+
 -- AlterTable
 ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE CITEXT,
 ALTER COLUMN "username" SET DATA TYPE CITEXT;

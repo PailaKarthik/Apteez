@@ -25,11 +25,19 @@
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
+  // Explicit output inside this package (instead of node_modules): the
+  // generated client ships with the package, so `pnpm deploy` production
+  // trees and Docker images carry a working client without extra steps.
+  output          = "../generated/client"
 }
 
 datasource db {
   provider   = "postgresql"
+  // Runtime uses the pooled endpoint (Neon `-pooler` host with
+  // `?pgbouncer=true`); schema migrations use the direct endpoint below.
+  // Local docker Postgres accepts the same URL in both variables.
   url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
   extensions = [citext, pg_trgm]
 }
 
@@ -70,6 +78,39 @@ enum ContributionStatus {
   REJECTED
 }
 
+// Advisory recommendation from a contribution analysis run. REVIEW is the
+// safe default; APPROVE never publishes anything by itself.
+enum AiReviewRecommendation {
+  APPROVE
+  REVIEW
+  REJECT
+}
+
+// Centralized report queue covering every reportable target type.
+enum ReportStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+enum ReportTargetType {
+  PROBLEM
+  CONTRIBUTION
+  DISCUSSION_POST
+  DISCUSSION_REPLY
+  EVENT
+  CONTEST
+  USER
+}
+
+enum ReportPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
 enum SubmissionContext {
   PRACTICE
   CHALLENGE
@@ -108,6 +149,8 @@ enum PointTransactionType {
   EARN
   SPEND
   ADJUST
+  REVERSAL
+  REFUND
 }
 
 // Contest lifecycle. Transitions are validated server-side; clients can never
@@ -123,11 +166,82 @@ enum ContestStatus {
   ARCHIVED
 }
 
+// Event lifecycle. Backend owns every transition; the frontend never moves
+// an event directly. REGISTRATION_OPEN/CLOSED are explicit states so "can I
+// register?" is a status check, not a timestamp guess on the client.
 enum EventStatus {
   DRAFT
   PUBLISHED
-  CANCELLED
+  REGISTRATION_OPEN
+  REGISTRATION_CLOSED
+  LIVE
   COMPLETED
+  CANCELLED
+  ARCHIVED
+}
+
+enum EventVisibility {
+  PUBLIC
+  PRIVATE
+  UNIVERSITY
+  COMMUNITY
+}
+
+enum EventType {
+  CONTEST
+  QUIZ
+  WORKSHOP
+  MARATHON
+  MEETUP
+  AMA
+  HACKATHON
+}
+
+enum EventParticipantStatus {
+  REGISTERED
+  WAITLISTED
+  ACTIVE
+  SUBMITTED
+  AUTO_SUBMITTED
+  WITHDRAWN
+  DISQUALIFIED
+}
+
+enum EventInviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum NotificationType {
+  EVENT_REGISTERED
+  EVENT_WITHDRAWN
+  EVENT_STARTING_SOON
+  EVENT_STARTED
+  EVENT_CANCELLED
+  EVENT_UPDATED
+  EVENT_RESULTS_PUBLISHED
+  POINTS_EARNED
+  REWARD_REDEEMED
+  REWARD_REFUNDED
+  POINTS_ADJUSTED
+  CONTRIBUTION_SUBMITTED
+  CONTRIBUTION_APPROVED
+  CONTRIBUTION_REJECTED
+  CONTRIBUTION_CHANGES_REQUESTED
+  MODERATION_ACTION
+  REPORT_RESOLVED
+  CONTEST_CANCELLED
+}
+
+enum RedemptionStatus {
+  PENDING
+  PROCESSING
+  FULFILLED
+  CANCELLED
+  FAILED
+  REFUNDED
 }
 
 // 1v1 challenge lifecycle. Transitions are validated server-side; clients can
@@ -188,8 +302,19 @@ model User {
   // University / college affiliation, free text.
   institution   String?
   bio           String?   @db.Text
+  // IANA timezone for streak/activity day boundaries; UTC when unset.
+  timezone      String?
+  // Private profiles are visible only to the owner (and admins).
+  isPrivate     Boolean   @default(false)
+  // System accounts (house bot) never sign in and never appear on leaderboards.
+  isSystem      Boolean   @default(false)
   // Deactivation flag instead of deletion: audit tables Restrict user removal.
   isActive      Boolean   @default(true)
+  // Temporary suspension expiry. When set and in the future, the account
+  // stays inactive; UsersService lifts the suspension once it passes.
+  suspendedUntil DateTime? @db.Timestamptz(3)
+  // Human reason for the latest status change (ban/suspend/deactivate).
+  statusReason  String?
   createdAt     DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
 
@@ -211,12 +336,23 @@ model User {
   contestRatings          ContestRating[]
   contestRatingHistory    ContestRatingHistory[]
   contestSuspiciousEvents ContestSuspiciousEvent[]
-  eventParticipations     EventParticipation[]
-  organizedEvents         Event[]
+  eventParticipations     EventParticipant[]
+  organizedEvents         Event[]                  @relation("EventOrganizer")
+  eventAnswers            EventAnswer[]
+  eventResults            EventResult[]
+  eventInvitesSent        EventInvite[]            @relation("EventInviteSender")
+  eventInvitesReceived    EventInvite[]            @relation("EventInviteTarget")
+  organizationMemberships OrganizationMember[]
+  organizedOrganizations  Organization[]           @relation("OrganizationOwner")
+  notifications           Notification[]
+  eventAuditActions       EventAudit[]             @relation("EventAuditActor")
   discussionPosts         DiscussionPost[]
   discussionReplies       DiscussionReply[]
   discussionReactions     DiscussionReaction[]
   discussionReports       DiscussionReport[]
+  reportsFiled            Report[]                 @relation("ReportReporter")
+  reportsAssigned         Report[]                 @relation("ReportAssignee")
+  auditActions            AdminAuditLog[]          @relation("AuditActor")
   challengesAsPlayer1     Challenge[]              @relation("ChallengePlayer1")
   challengesAsPlayer2     Challenge[]              @relation("ChallengePlayer2")
   challengesWon           Challenge[]              @relation("ChallengeWinner")
@@ -225,6 +361,13 @@ model User {
   challengeRatingHistory  ChallengeRatingHistory[]
   ratingHistoryOpponents  ChallengeRatingHistory[] @relation("ChallengeRatingHistoryOpponent")
   learningProgress        UserLearningProgress[]
+  activityDaily           UserActivityDaily[]
+  points                  UserPoints?
+  rewardRedemptions       RewardRedemption[]
+  searchEvents            SearchEvent[]
+  analyticsEvents         AnalyticsEvent[]
+  feedbacks               Feedback[]
+  aiFeedback              AiFeedback[]
 
   @@map("users")
 }
@@ -315,6 +458,7 @@ model Category {
   updatedAt              DateTime                 @updatedAt @db.Timestamptz(3)
   topics                 Topic[]
   problems               Problem[]
+  contributions          Contribution[]
   challenges             Challenge[]
   challengeRatings       ChallengeRating[]
   challengeRatingHistory ChallengeRatingHistory[]
@@ -377,8 +521,9 @@ model Problem {
   // Authoring-time attribute so list views never join assets just for a badge.
   contentMode ProblemContentMode @default(TEXT_ONLY)
   difficulty  Difficulty         @default(MEDIUM)
-  // Entry rating for ordering/adaptive selection; the rating ENGINE lives in
-  // a later prompt and writes UserRating, never this column.
+  // Question difficulty rating: whole hundreds within 1000-2000 only
+  // (1000, 1100, ..., 2000). Enforced by Zod (questionRatingSchema), the
+  // normalization migrations, and a DB CHECK constraint.
   rating      Float              @default(1500)
   status      ProblemStatus      @default(DRAFT)
   explanation String?            @db.Text
@@ -389,14 +534,18 @@ model Problem {
   creator     User?              @relation(fields: [creatorId], references: [id], onDelete: SetNull)
   categoryId  String             @db.Uuid
   category    Category           @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  topicId     String             @db.Uuid
-  topic       Topic              @relation(fields: [topicId], references: [id], onDelete: Restrict)
+  topicId     String?            @db.Uuid
+  topic       Topic?             @relation(fields: [topicId], references: [id], onDelete: SetNull)
   subtopicId  String?            @db.Uuid
   subtopic    Subtopic?          @relation(fields: [subtopicId], references: [id], onDelete: SetNull)
   // Set once on first publication; powers "new problems" feeds and auditing.
   publishedAt DateTime?          @db.Timestamptz(3)
   createdAt   DateTime           @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime           @updatedAt @db.Timestamptz(3)
+  // ORM-opaque full-text vector (GENERATED ALWAYS … STORED, see the Prompt 17
+  // migration). Read/written only by raw SQL in the search service; Prisma
+  // acknowledges the column so drift checks stay meaningful.
+  searchVector Unsupported("tsvector")?
 
   assets             ProblemAsset[]
   options            ProblemOption[]
@@ -406,15 +555,23 @@ model Problem {
   exams              ProblemExam[]
   challengeQuestions ChallengeQuestion[]
   contestQuestions   ContestQuestion[]
+  eventQuestions     EventQuestion[]
   learningLessons    LearningLessonProblem[]
+  embedding          ProblemEmbedding?
 
   @@index([status])
   @@index([categoryId, status])
   @@index([topicId, status])
+  @@index([subtopicId])
   @@index([difficulty])
   @@index([rating])
   @@index([createdAt])
   @@index([creatorId])
+  // Keyset-cursor composites for the hot list sorts (createdAt/id,
+  // rating/id). Pinned with map: to the Prompt 05 index names so the schema
+  // and the database agree instead of drifting.
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "problems_createdAt_id_idx")
+  @@index([rating(sort: Desc), id(sort: Desc)], map: "problems_rating_id_idx")
   @@map("problems")
 }
 
@@ -474,6 +631,14 @@ model Contribution {
   options            Json
   explanation        String?            @db.Text
   difficulty         Difficulty?
+  // Everything needed to mint the canonical problem: section (required at
+  // submit), rating, exam-folder slugs and source. Nullable so older rows
+  // without them keep working (approval falls back where it can).
+  categoryId         String?            @db.Uuid
+  category           Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  rating             Int?
+  examTags           Json?
+  source             String?
   topicId            String?            @db.Uuid
   topic              Topic?             @relation(fields: [topicId], references: [id], onDelete: SetNull)
   sourceUrl          String?
@@ -482,18 +647,97 @@ model Contribution {
   reviewer           User?              @relation("ContributionReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
   // Internal review note. Must never be exposed to ordinary users.
   reviewerNote       String?            @db.Text
+  // Contributor-facing feedback (e.g. requested changes). Safe to expose to
+  // the contributor only — never to other ordinary users.
+  feedbackForContributor String?        @db.Text
   submittedAt        DateTime           @default(now()) @db.Timestamptz(3)
   reviewedAt         DateTime?          @db.Timestamptz(3)
   resultingProblemId String?            @unique @db.Uuid
   resultingProblem   Problem?           @relation(fields: [resultingProblemId], references: [id], onDelete: SetNull)
   createdAt          DateTime           @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime           @updatedAt @db.Timestamptz(3)
+  aiReviews          ContributionAiReview[]
 
   @@index([contributorId])
   @@index([status])
   @@index([submittedAt])
   @@index([reviewerId])
+  @@index([topicId])
   @@map("contributions")
+}
+
+// Structured analysis of a contribution. Written by the deterministic
+// precheck ('precheck-v1') or by the AI review worker ('ai-reviewer-vX');
+// READ by admins as advisory input only. This row can never publish
+// content — only a human approval transition may do that.
+model ContributionAiReview {
+  id                   String                @id @default(uuid()) @db.Uuid
+  contributionId       String                @db.Uuid
+  contribution         Contribution          @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+  // Producer identity: 'precheck-v1' (deterministic) or 'ai-reviewer-vX'.
+  // The review UI labels AI output by this prefix.
+  model                String
+  suggestedTopic       String?
+  suggestedSubtopic    String?
+  suggestedDifficulty  Difficulty?
+  duplicateProbability Float?
+  answerConsistent     Boolean?
+  issues               Json?
+  recommendation       AiReviewRecommendation @default(REVIEW)
+  rawResponse          Json?
+  createdAt            DateTime              @default(now()) @db.Timestamptz(3)
+
+  @@index([contributionId, createdAt])
+  @@map("contribution_ai_reviews")
+}
+
+// Centralized moderation report queue. targetId is the UUID of the target
+// row as a string (polymorphic: no single FK is possible). Reporters cannot
+// file unlimited duplicates: one open-or-reviewing report per
+// (reporter, target) at a time (partial unique index, see migration).
+model Report {
+  id                  String           @id @default(uuid()) @db.Uuid
+  reporterId          String           @db.Uuid
+  reporter            User             @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetType          ReportTargetType
+  targetId            String           @db.Uuid
+  reason              String
+  description         String?          @db.Text
+  status              ReportStatus     @default(OPEN)
+  priority            ReportPriority   @default(NORMAL)
+  assignedModeratorId String?          @db.Uuid
+  assignedModerator   User?            @relation("ReportAssignee", fields: [assignedModeratorId], references: [id], onDelete: SetNull)
+  resolution          String?          @db.Text
+  createdAt           DateTime         @default(now()) @db.Timestamptz(3)
+  resolvedAt          DateTime?        @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+  @@index([reporterId])
+  @@index([assignedModeratorId])
+  @@map("reports")
+}
+
+// Append-only audit trail for sensitive administrative actions. Rows are
+// written by AdminAuditService and never updated or deleted through any API.
+model AdminAuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  actorUserId   String   @db.Uuid
+  actor         User     @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Cascade)
+  action        String
+  targetType    String?
+  targetId      String?  @db.Uuid
+  previousValue Json?
+  newValue      Json?
+  reason        String?  @db.Text
+  ip            String?
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+  @@map("admin_audit_logs")
 }
 
 // ─── Exam tagging ────────────────────────────────────────────────────────
@@ -598,6 +842,9 @@ model Submission {
   @@index([userId, problemId])
   @@index([userId, context, submittedAt])
   @@index([context, status])
+  @@index([userId, status, isCorrect])
+  @@index([problemId, status])
+  @@index([status, submittedAt])
   @@map("submissions")
 }
 
@@ -657,10 +904,123 @@ model PointTransaction {
   // Machine-readable cause, e.g. "weekly_target:complete".
   reason       String
   referenceId  String?
+  // Idempotency source for rule-driven awards (e.g. sourceType "submission",
+  // sourceId "<submissionId>"). The partial unique index
+  // point_transactions_user_source_unique (see migration) enforces
+  // UNIQUE(userId, sourceType, sourceId, type) for non-null sourceIds, so a
+  // retried request can never double-award. Prisma cannot express partial
+  // unique indexes, hence raw SQL in the migration.
+  sourceType   String?
+  sourceId     String?
+  // Human-readable label shown in history, e.g. "First Problem Solved".
+  description  String?
+  // Rule key, admin actor, redemption id and other audit context.
+  metadata     Json?
   createdAt    DateTime             @default(now()) @db.Timestamptz(3)
 
   @@index([userId, createdAt])
+  @@index([userId, reason, createdAt])
+  @@index([userId, type, createdAt])
+  @@index([userId, sourceType, sourceId])
   @@map("point_transactions")
+}
+
+// Transactionally synchronized balance mirror of the ledger. Every mutation
+// happens in the same database transaction as its PointTransaction row, and a
+// verification query (SUM over the ledger) can always explain the balance.
+model UserPoints {
+  userId         String   @id @db.Uuid
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance        Int      @default(0)
+  lifetimeEarned Int      @default(0)
+  lifetimeSpent  Int      @default(0)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("user_points")
+}
+
+// Centralized, data-driven reward rules. Amounts and caps are server-owned:
+// clients can only name a trigger, never a points amount. Milestone and
+// achievement payouts live on Achievement rows; activity/onboarding payouts
+// live here. All funnel through PointsService.awardTrigger, which awards
+// EVERY active in-window rule sharing the trigger — so an admin-created rule
+// with trigger "problem-solve" fires on every solve with zero code changes.
+// `key` stays the stable identity; `trigger` is the firing event.
+model RewardRule {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  name        String
+  description String?
+  points      Int
+  // Firing event, e.g. problem-solve | challenge-complete | contest-participate
+  // | event-participate | onboarding. Custom triggers are allowed — any code
+  // emitting awardTrigger({ trigger }) picks them up automatically.
+  trigger     String   @default("manual")
+  // activity | milestone | onboarding — each family can carry different limits.
+  category    String   @default("activity")
+  // Max awards per user per UTC day; null means uncapped (source uniqueness
+  // still applies). Guards repetitive grinding without hurting legit users.
+  dailyCap    Int?
+  // Max awards per user ever; null means unlimited (within daily cap).
+  maxPerUser  Int?
+  // Minimum seconds between two awards of this rule to the same user.
+  cooldownSeconds Int?
+  // Optional validity window (UTC); null ends mean open-ended.
+  validFrom   DateTime? @db.Timestamptz(3)
+  validTo     DateTime? @db.Timestamptz(3)
+  isActive    Boolean  @default(true)
+  metadata    Json?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([trigger, isActive])
+  @@map("reward_rules")
+}
+
+// Redemption catalog. Physical fulfillment (payment/shipping) is deferred;
+// the model already carries the fields fulfillment will need (image, stock,
+// metadata) so no restructuring is required later.
+model Reward {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String
+  description   String?  @db.Text
+  category      String   @default("merch")
+  pointsCost    Int
+  imageKey      String?
+  // Null means unlimited stock. Never negative — enforced transactionally.
+  stockQuantity Int?
+  isActive      Boolean  @default(true)
+  metadata      Json?
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+  redemptions   RewardRedemption[]
+
+  @@index([isActive])
+  @@map("rewards")
+}
+
+model RewardRedemption {
+  id             String           @id @default(uuid()) @db.Uuid
+  userId         String           @db.Uuid
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rewardId       String           @db.Uuid
+  reward         Reward           @relation(fields: [rewardId], references: [id], onDelete: Restrict)
+  // Cost snapshot: later catalog edits never rewrite history.
+  pointsCost     Int
+  status         RedemptionStatus @default(PENDING)
+  // Client-supplied idempotency key. The partial unique index
+  // reward_redemptions_user_key_unique (see migration) makes retries return
+  // the existing redemption instead of charging twice.
+  idempotencyKey String?
+  createdAt      DateTime         @default(now()) @db.Timestamptz(3)
+  processedAt    DateTime?        @db.Timestamptz(3)
+  cancelledAt    DateTime?        @db.Timestamptz(3)
+  metadata       Json?
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@map("reward_redemptions")
 }
 
 model Achievement {
@@ -668,6 +1028,10 @@ model Achievement {
   key         String            @unique
   name        String
   description String?
+  // Data-driven grouping for the profile achievements grid.
+  category    String            @default("general")
+  // Rule hints for the evaluator (thresholds, scopes); never client-trusted.
+  metadata    Json?
   // Points awarded on unlock; 0 for badge-only achievements.
   points      Int               @default(0)
   isActive    Boolean           @default(true)
@@ -702,6 +1066,35 @@ model UserStreak {
   updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
 
   @@map("user_streaks")
+}
+
+// ─── Profile activity rollup (Prompt 15) ─────────────────────────────────
+// Pre-aggregated daily counters derived from AUTHORITATIVE records
+// (submissions, challenge/contest/event results, learning progress, point
+// ledger). Rebuilt idempotently by ActivityService — never written from
+// client input, so heatmaps and streaks always reflect real activity.
+
+model UserActivityDaily {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @db.Uuid
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Calendar day in the user's timezone (YYYY-MM-DD), stored as Date.
+  date              DateTime @db.Date
+  problemsAttempted Int      @default(0)
+  problemsSolved    Int      @default(0)
+  challengesPlayed  Int      @default(0)
+  challengeWins     Int      @default(0)
+  contestsAttempted Int      @default(0)
+  eventsJoined      Int      @default(0)
+  lessonsCompleted  Int      @default(0)
+  pointsEarned      Int      @default(0)
+  totalActivityCount Int     @default(0)
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@map("user_activity_daily")
 }
 
 // ─── Contests ────────────────────────────────────────────────────────────
@@ -853,9 +1246,11 @@ model ContestParticipant {
   answers       ContestAnswer[]
   result        ContestResult?
   ratingHistory ContestRatingHistory[]
+  suspiciousEvents ContestSuspiciousEvent[]
 
   @@unique([contestId, userId])
   @@index([contestId, status])
+  @@index([contestId, status, effectiveEndAt])
   @@index([contestId, userId])
   @@index([userId])
   @@map("contest_participants")
@@ -967,14 +1362,16 @@ model ContestSuspiciousEvent {
   contestId     String                     @db.Uuid
   contest       Contest                    @relation(fields: [contestId], references: [id], onDelete: Cascade)
   participantId String                     @db.Uuid
+  participant   ContestParticipant         @relation(fields: [participantId], references: [id], onDelete: Cascade)
   type          ContestSuspiciousEventType
   detail        String?
   createdAt     DateTime                   @default(now()) @db.Timestamptz(3)
-  user          User?                      @relation(fields: [userId], references: [id])
+  user          User?                      @relation(fields: [userId], references: [id], onDelete: SetNull)
   userId        String?                    @db.Uuid
 
   @@index([contestId, createdAt])
   @@index([participantId])
+  @@index([userId])
   @@map("contest_suspicious_events")
 }
 
@@ -1119,7 +1516,7 @@ model LearningLessonProblem {
   id            String         @id @default(uuid()) @db.Uuid
   lessonId      String         @db.Uuid
   lesson        LearningLesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
-  problemId     String         @unique @db.Uuid
+  problemId     String         @db.Uuid
   problem       Problem        @relation(fields: [problemId], references: [id], onDelete: Restrict)
   practiceCount Int            @default(5)
   order         Int            @default(0)
@@ -1166,39 +1563,257 @@ model UserLearningProgress {
 }
 
 
-// ─── Events (minimal boundaries; logic in a later prompt) ────────────────
+// ─── Events (Prompt 14: full platform feature) ────────────────────────────
+// PostgreSQL is the system of record for every event, registration, answer
+// and result. Redis holds only ephemeral counters/locks/live metadata.
+// EventQuestions reference canonical Problems (never duplicated content) so
+// future RAG (Similar Problems over pgvector) and the Performance Coach stay
+// clean. isPaid/price/payment columns are structural readiness only — no
+// payment processor is wired in this prompt.
+
+model Organization {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String   @unique
+  description String?  @db.Text
+  ownerId     String?  @db.Uuid
+  owner       User?    @relation("OrganizationOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  members OrganizationMember[]
+  events  Event[]
+
+  @@index([slug])
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String       @db.Uuid
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("organization_members")
+}
 
 model Event {
-  id             String               @id @default(uuid()) @db.Uuid
-  title          String
-  slug           String               @unique
-  description    String?              @db.Text
-  status         EventStatus          @default(DRAFT)
-  startsAt       DateTime             @db.Timestamptz(3)
-  endsAt         DateTime?            @db.Timestamptz(3)
-  location       String?
-  organizerId    String?              @db.Uuid
-  organizer      User?                @relation(fields: [organizerId], references: [id], onDelete: SetNull)
-  createdAt      DateTime             @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime             @updatedAt @db.Timestamptz(3)
-  participations EventParticipation[]
+  id          String          @id @default(uuid()) @db.Uuid
+  organizerId String?         @db.Uuid
+  organizer   User?           @relation("EventOrganizer", fields: [organizerId], references: [id], onDelete: SetNull)
+  organizationId String?      @db.Uuid
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  title       String
+  slug        String          @unique
+  description String          @db.Text
+  bannerKey   String?
+  eventType   EventType       @default(CONTEST)
+  visibility  EventVisibility @default(PUBLIC)
+  status      EventStatus     @default(DRAFT)
+  difficulty  Difficulty      @default(MEDIUM)
+  // Provenance: true when created by an admin (official ApteeZ event), false
+  // for community events created by regular users. Drives Official/Community
+  // badges and list filters — NOT access (see visibility).
+  isOfficial  Boolean         @default(false)
+  // Entry code for private events: participants must supply it to register or
+  // join (managers, existing participants and invitees bypass). Plaintext by
+  // design — it is a shareable passcode, and organizers need to view/share it.
+  // Never exposed in public DTOs, only in the manage view.
+  entryCode   String?
+  maxParticipants Int?
+  registrationStartAt DateTime? @db.Timestamptz(3)
+  registrationEndAt   DateTime? @db.Timestamptz(3)
+  startAt     DateTime        @db.Timestamptz(3)
+  endAt       DateTime        @db.Timestamptz(3)
+  // Duration in minutes; the live window for a participant is
+  // min(endAt, joinedAt + duration). Stored as minutes for organizer UX.
+  durationMinutes Int @default(60)
+  // Paid-event readiness (structural only — no processor wired).
+  isPaid      Boolean         @default(false)
+  price       Float?
+  paymentProvider String?
+  paymentStatus   String?
+  orderReference  String?
+  refundStatus    String?
+  rules       String?         @db.Text
+  questionCount Int           @default(0)
+  participantCount Int        @default(0)
+  createdAt   DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime        @updatedAt @db.Timestamptz(3)
+  publishedAt DateTime?       @db.Timestamptz(3)
+  cancelledAt DateTime?       @db.Timestamptz(3)
+  archivedAt  DateTime?       @db.Timestamptz(3)
 
-  @@index([status, startsAt])
+  questions    EventQuestion[]
+  participants EventParticipant[]
+  answers      EventAnswer[]
+  results      EventResult[]
+  invites      EventInvite[]
+  audits       EventAudit[]
+  notifications Notification[]
+
+  @@index([status])
+  @@index([visibility])
+  @@index([organizerId])
+  @@index([organizationId])
+  @@index([startAt])
+  @@index([status, startAt])
+  @@index([status, visibility, startAt])
+  @@index([slug])
+  @@index([eventType, status])
+  @@index([difficulty])
   @@map("events")
 }
 
-model EventParticipation {
-  id       String   @id @default(uuid()) @db.Uuid
-  eventId  String   @db.Uuid
-  event    Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  userId   String   @db.Uuid
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  joinedAt DateTime @default(now()) @db.Timestamptz(3)
+model EventQuestion {
+  id        String   @id @default(uuid()) @db.Uuid
+  eventId   String   @db.Uuid
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  problemId String   @db.Uuid
+  problem   Problem  @relation(fields: [problemId], references: [id], onDelete: Restrict)
+  order     Int
+  points    Int      @default(1)
+  timeLimitSeconds Int?
+
+  answers EventAnswer[]
+
+  @@unique([eventId, order])
+  @@unique([eventId, problemId])
+  @@index([eventId])
+  @@map("event_questions")
+}
+
+model EventParticipant {
+  id           String                 @id @default(uuid()) @db.Uuid
+  eventId      String                 @db.Uuid
+  event        Event                  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId       String                 @db.Uuid
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status       EventParticipantStatus @default(REGISTERED)
+  registeredAt DateTime               @default(now()) @db.Timestamptz(3)
+  joinedAt     DateTime?              @db.Timestamptz(3)
+  effectiveEndAt DateTime?            @db.Timestamptz(3)
+  completedAt  DateTime?              @db.Timestamptz(3)
+  submittedAt  DateTime?              @db.Timestamptz(3)
+  lastSeenAt   DateTime?              @db.Timestamptz(3)
+  currentPosition Int                 @default(0)
+  score        Int?
+  rank         Int?
+
+  answers EventAnswer[]
+  result  EventResult?
 
   @@unique([eventId, userId])
   @@index([eventId])
   @@index([userId])
-  @@map("event_participations")
+  @@index([eventId, status])
+  @@index([eventId, status, effectiveEndAt])
+  @@map("event_participants")
+}
+
+model EventAnswer {
+  id              String           @id @default(uuid()) @db.Uuid
+  eventId         String           @db.Uuid
+  event           Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  participantId   String           @db.Uuid
+  participant     EventParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  eventQuestionId String           @db.Uuid
+  eventQuestion   EventQuestion    @relation(fields: [eventQuestionId], references: [id], onDelete: Cascade)
+  userId          String           @db.Uuid
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  selectedOptionId String?         @db.Uuid
+  isCorrect       Boolean?
+  markedForReview Boolean          @default(false)
+  answeredAt      DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@unique([eventQuestionId, participantId])
+  @@index([eventId, participantId])
+  @@index([participantId])
+  @@map("event_answers")
+}
+
+model EventResult {
+  id                String           @id @default(uuid()) @db.Uuid
+  eventId           String           @db.Uuid
+  event             Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId            String           @db.Uuid
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  participantId     String           @unique @db.Uuid
+  participant       EventParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  score             Int
+  correctCount      Int
+  wrongCount        Int
+  unansweredCount   Int
+  totalPoints       Int
+  completionSeconds Int
+  rank              Int?
+  autoSubmitted     Boolean          @default(false)
+  finalizedAt       DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@unique([eventId, userId])
+  @@index([eventId, rank])
+  @@index([eventId, score(sort: Desc), completionSeconds])
+  @@map("event_results")
+}
+
+model EventInvite {
+  id             String            @id @default(uuid()) @db.Uuid
+  eventId        String            @db.Uuid
+  event          Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  invitedUserId  String?           @db.Uuid
+  invitedUser    User?             @relation("EventInviteTarget", fields: [invitedUserId], references: [id], onDelete: Cascade)
+  invitedEmail   String?
+  invitedById    String            @db.Uuid
+  invitedBy      User              @relation("EventInviteSender", fields: [invitedById], references: [id], onDelete: Restrict)
+  status         EventInviteStatus @default(PENDING)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(3)
+  respondedAt    DateTime?         @db.Timestamptz(3)
+
+  @@unique([eventId, invitedUserId])
+  @@index([eventId, status])
+  @@index([invitedUserId])
+  @@index([invitedById])
+  @@map("event_invites")
+}
+
+// Append-only audit trail for moderation + organizer actions.
+model EventAudit {
+  id        String   @id @default(uuid()) @db.Uuid
+  eventId   String   @db.Uuid
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  actorId   String?  @db.Uuid
+  actor     User?    @relation("EventAuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action    String
+  detail    String?  @db.Text
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([eventId, createdAt])
+  @@index([actorId])
+  @@map("event_audits")
+}
+
+// DB-backed inbox. BullMQ delivers asynchronously; PostgreSQL is truth.
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String?          @db.Text
+  eventId   String?          @db.Uuid
+  event     Event?           @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, createdAt])
+  @@index([userId, isRead, createdAt])
+  @@index([eventId])
+  @@map("notifications")
 }
 
 // ─── Discussions (Prompt 13) ─────────────────────────────────────────────
@@ -1354,6 +1969,9 @@ model Challenge {
   questionCount         Int
   durationSeconds       Int
   minReadingSeconds     Int
+  // Solo run against the house bot (no opponent found in time): unrated,
+  // endless questions until the clock runs out.
+  isSolo              Boolean                  @default(false)
   // Rating engine bookkeeping. The challenge is finalized independently of
   // rating; this tracks whether the (idempotent) rating step has run.
   ratingStatus          RatingProcessingStatus     @default(PENDING)
@@ -1376,6 +1994,7 @@ model Challenge {
   @@index([status])
   @@index([domainSlug])
   @@index([ratingStatus])
+  @@index([winnerId])
   @@map("challenges")
 }
 
@@ -1392,7 +2011,6 @@ model ChallengeQuestion {
   answers ChallengeAnswer[]
 
   @@unique([challengeId, position])
-  @@unique([challengeId, problemId])
   @@index([challengeId])
   @@map("challenge_questions")
 }
@@ -1482,4 +2100,178 @@ model ChallengeAnswer {
   @@unique([challengeQuestionId, playerId])
   @@index([challengeId, playerId])
   @@map("challenge_answers")
+}
+
+// ─── Search & discovery (Prompt 17) ─────────────────────────────────────
+// Fire-and-forget analytics log for submitted searches and result clicks.
+// Powers recent searches and trending inputs; never blocks request paths.
+// The problems full-text vector lives in raw SQL (see migration
+// 20260916000000_prompt17_search): Prisma cannot express a generated
+// tsvector column, so SearchService queries it via parameterized $queryRaw.
+// The future RAG pipeline will add a separate embeddings table + pgvector;
+// this lexical layer stays untouched behind SearchService.
+
+model SearchEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @db.Uuid
+  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Anonymous correlation key (random client token), never PII.
+  sessionKey String?
+  // 'search' | 'click'. Suggestion impressions are intentionally not logged.
+  event      String
+  // Normalized query text, max 120 chars (validated at the API boundary).
+  query      String
+  // Result kind clicked: PROBLEM | TOPIC | LEARNING | CONTEST | EVENT | DISCUSSION.
+  resultType String?
+  resultId   String?  @db.Uuid
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, createdAt])
+  @@index([userId, event, createdAt])
+  @@index([createdAt])
+  @@map("search_events")
+}
+
+// ─── Product analytics (Prompt 23) ───────────────────────────────────────
+// Coarse, append-only product milestones (activation, engagement, funnel,
+// retention). Domain telemetry keeps its own tables (search_events,
+// ai_usage_logs, user_activity_daily). Rows die with the user (Cascade) and
+// are never seeded — demo journeys generate real rows through the API.
+
+model AnalyticsEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  // Validated against ANALYTICS_EVENTS in the API; arbitrary names rejected.
+  name      String
+  userId    String?  @db.Uuid
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Bounded, non-sensitive context (ids, slugs, counts). Passwords, tokens,
+  // answers, prompts, and message bodies are stripped by the recorder.
+  metadata  Json?
+  requestId String?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([name, createdAt])
+  @@index([userId, createdAt])
+  @@index([userId, name, createdAt])
+  @@map("analytics_events")
+}
+
+// ─── AI infrastructure (Prompt 19+) ─────────────────────────────────────
+// RAG embeddings + AI usage telemetry. The vector column itself lives in
+// raw SQL (Prisma has no native `vector` scalar): `problem_embeddings`
+// holds exactly one row per problem (problemId PK/FK) with a pgvector
+// column written only by the embedding pipeline via parameterized $queryRaw.
+// The Prisma model below maps every NON-vector column so metadata reads
+// stay type-safe; the vector is opaque to the ORM by design.
+
+model ProblemEmbedding {
+  problemId   String    @id @db.Uuid
+  problem     Problem   @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  model       String
+  dimensions  Int
+  version     Int       @default(1)
+  status      String    @default("PENDING")
+  error       String?
+  generatedAt DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+  // ORM-opaque pgvector column (vector(3072) for Google gemini-embedding-001;
+  // exact cosine scan, no ANN index — HNSW is rejected by this Neon's
+  // storage layer and IVFFLAT caps at 2000 dims, see migrations
+  // 20260926000001/2). Written only by the embedding pipeline via $queryRaw;
+  // declared here so drift checks see the real database instead of a
+  // phantom drop.
+  embedding   Unsupported("vector(3072)")?
+
+  @@index([status])
+  @@map("problem_embeddings")
+}
+
+// Append-only AI usage/cost telemetry. One row per provider call (or
+// skipped call), never user content — prompts/responses stay out of the DB.
+model AiUsageLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  feature        String
+  model          String
+  userId         String?  @db.Uuid
+  promptTokens   Int?
+  completionTokens Int?
+  latencyMs      Int?
+  success        Boolean
+  error          String?
+  // Quality-loop fields (Prompt 24): whether the deterministic fallback
+  // served the request, how many tool calls the agent made, and the
+  // originating request id for cross-service correlation.
+  fallbackUsed   Boolean  @default(false)
+  toolCount      Int?
+  requestId      String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([feature, createdAt])
+  @@index([userId, createdAt])
+  @@map("ai_usage_logs")
+}
+
+// ─── Launch operations (Prompt 24) ─────────────────────────────────────
+// User feedback, AI quality signals, and RAG retrieval telemetry. All three
+// are append-only operational tables: rows are produced by real API/queue
+// activity and are never seeded. Feedback categories/verdicts are validated
+// at the API boundary; the database stores plain strings.
+
+// Lightweight user reports (bugs, bad questions, UI issues, AI issues,
+// feature feedback). userId is nullable so anonymous visitors can report;
+// rows survive account deletion (SET NULL) to keep the ops queue intact.
+model Feedback {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String?   @db.Uuid
+  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  category    String
+  description String    @db.Text
+  // Page/route or feature context where the issue was seen (no free-form PII).
+  page        String?
+  status      String    @default("OPEN")
+  priority    String    @default("MEDIUM")
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  resolvedAt  DateTime? @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@map("feedback")
+}
+
+// Per-user quality signals for AI features. Advisory signals for evaluation
+// only — never treated as ground truth and never applied automatically.
+model AiFeedback {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // 'performance-coach' | 'similar-problems' | 'contribution-review'.
+  feature   String
+  // Rated object where one exists (e.g. the source problem for similar).
+  targetId  String?  @db.Uuid
+  // Coach: 'helpful' | 'not_helpful'. Similar: 'relevant' | 'not_relevant'.
+  // Review: 'agree' | 'disagree' (admin vs AI recommendation).
+  verdict   String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([feature, createdAt])
+  @@index([userId, createdAt])
+  @@map("ai_feedback")
+}
+
+// Per-request Similar Problems retrieval telemetry. No queries, prompts, or
+// content — source/result counts/latency only, for fallback-rate monitoring.
+model RagRetrievalLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  problemId   String?  @db.Uuid
+  // 'vector' | 'lexical-fallback' | 'empty'.
+  source      String
+  resultCount Int
+  latencyMs   Int?
+  requestId   String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([createdAt])
+  @@index([source, createdAt])
+  @@map("rag_retrieval_logs")
 }

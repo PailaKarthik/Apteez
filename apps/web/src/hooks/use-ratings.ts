@@ -1,7 +1,8 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type {
+  ContestRatingLeaderboardEntryDto,
   CursorPage,
   RatingHistoryEntryDto,
   RatingLeaderboardEntryDto,
@@ -68,5 +69,24 @@ export function useRatingLeaderboard(domain: string, institution?: string) {
       apiFetch<RatingLeaderboardEntryDto[]>(`/ratings/leaderboard?${search.toString()}`),
     enabled: Boolean(domain),
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Global contest-rating leaderboard: overall contest performance. */
+export function useContestRatingLeaderboard(institution?: string) {
+  const search = new URLSearchParams();
+  if (institution) {
+    search.set('institution', institution);
+  }
+  const query = search.toString();
+  return useQuery({
+    queryKey: ['contests', 'ratings-leaderboard', institution ?? 'global'],
+    queryFn: () =>
+      apiFetch<ContestRatingLeaderboardEntryDto[]>(
+        `/contests/ratings/leaderboard${query ? `?${query}` : ''}`,
+      ),
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 }

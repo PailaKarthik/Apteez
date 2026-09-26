@@ -40,11 +40,26 @@ export class AccountExistsError extends AppError {
   }
 }
 
-/** 400 — OAuth code/state/userinfo exchange failed safely. */
+/**
+ * 400 — OAuth code/state/userinfo exchange failed safely.
+ *
+ * `reason` is a machine-stable stage code surfaced to the login page as
+ * `?oauthError=failed&oauthReason=<reason>` so a failed Google sign-in is
+ * self-diagnosing without ever leaking provider internals. Only these
+ * allowlisted values may cross the redirect boundary.
+ */
+export type OAuthFailureReason = 'expired' | 'token' | 'userinfo' | 'provision';
+
 export class InvalidOAuthError extends AppError {
-  constructor(message = 'Google sign-in failed. Please try again.') {
+  readonly reason: OAuthFailureReason;
+
+  constructor(
+    message = 'Google sign-in failed. Please try again.',
+    reason: OAuthFailureReason = 'provision',
+  ) {
     super('INVALID_OAUTH', message, 400);
     this.name = 'InvalidOAuthError';
+    this.reason = reason;
   }
 }
 
@@ -53,5 +68,23 @@ export class OAuthNotConfiguredError extends AppError {
   constructor(message = 'Google sign-in is not configured on this server.') {
     super('OAUTH_NOT_CONFIGURED', message, 503);
     this.name = 'OAuthNotConfiguredError';
+  }
+}
+
+/** 503 — email OTP requested but no mail provider is configured. */
+export class EmailNotConfiguredError extends AppError {
+  constructor(
+    message = 'Email verification is not available right now. Please try again later.',
+  ) {
+    super('EMAIL_NOT_CONFIGURED', message, 503);
+    this.name = 'EmailNotConfiguredError';
+  }
+}
+
+/** 400 — email OTP wrong, expired, or exhausted. Never reveals which. */
+export class InvalidEmailOtpError extends AppError {
+  constructor(message = 'That code is incorrect or has expired. Request a new one.') {
+    super('INVALID_EMAIL_OTP', message, 400);
+    this.name = 'InvalidEmailOtpError';
   }
 }

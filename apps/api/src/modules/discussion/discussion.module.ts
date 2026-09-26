@@ -6,7 +6,7 @@ import { DiscussionService } from './discussion.service';
 /**
  * Community discussions over the shared taxonomy. Public reads; session-gated
  * mutations. Counters and the accepted-solution flag are server-owned, and
- * moderation reuses the shared permissions system (`discussion.moderate`).
+ * moderation reuses the shared permissions system (`moderate:discussions`).
  * `DiscussionService` is exported so notifications/rewards can react to
  * discussion activity without reaching into the repository.
  */

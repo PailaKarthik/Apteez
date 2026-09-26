@@ -1,4 +1,5 @@
 import { Breadcrumb } from './breadcrumb';
+import { GlobalSearch } from '@/components/search/global-search';
 import { FavoritesButton } from './favorites-button';
 import { HelpMenu } from './help-menu';
 import { MobileNav } from './mobile-nav';
@@ -17,7 +18,10 @@ export function Topbar(): React.JSX.Element {
     <header className="sticky top-0 z-30 flex h-top-bar shrink-0 items-center gap-2 border-b border-border bg-background/85 px-3 backdrop-blur sm:gap-3 sm:px-6">
       <MobileNav />
       <Breadcrumb />
-      <div className="ml-auto flex items-center gap-1 sm:gap-1.5">
+      <div className="ml-auto hidden min-w-0 flex-1 max-w-md items-center px-2 md:flex">
+        <GlobalSearch />
+      </div>
+      <div className="ml-auto flex items-center gap-1 sm:gap-1.5 md:ml-0">
         <StreakPill />
         <FavoritesButton />
         <NotificationsMenu />

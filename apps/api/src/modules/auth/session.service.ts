@@ -66,10 +66,11 @@ export class SessionService {
       userAgent: meta.userAgent?.slice(0, 256),
       via: meta.via,
     });
-    const client = this.redis.getClient();
+    // Wrapped ops: Redis outages surface as RedisUnavailableError (503),
+    // never as raw ioredis rejections (500). GoogleOAuthService maps those
+    // to a safe login redirect during the browser OAuth flow.
     await this.redis.set(this.sessionKey(hash), record, this.ttlSeconds);
-    await client.sadd(this.userIndexKey(userId), hash);
-    await client.expire(this.userIndexKey(userId), this.ttlSeconds);
+    await this.redis.sadd(this.userIndexKey(userId), hash, this.ttlSeconds);
     return { token, expiresAt: new Date(Date.now() + this.ttlSeconds * 1000) };
   }
 
@@ -95,9 +96,11 @@ export class SessionService {
       return null;
     }
     // Sliding refresh: active sessions stay alive without re-login.
-    const ttl = await this.redis.getClient().ttl(key);
+    // Wrapped ops so a Redis blip surfaces as 503 (retryable) rather than a
+    // raw driver 500 that the web client treats as a hard failure.
+    const ttl = await this.redis.ttl(key);
     if (ttl > 0 && ttl < this.ttlSeconds / 2) {
-      await this.redis.getClient().expire(key, this.ttlSeconds);
+      await this.redis.expire(key, this.ttlSeconds);
     }
     return { userId: parsed.userId, sessionId: hash.slice(0, 12) };
   }
@@ -114,7 +117,7 @@ export class SessionService {
       try {
         const parsed = JSON.parse(raw) as { userId?: unknown };
         if (typeof parsed.userId === 'string') {
-          await this.redis.getClient().srem(this.userIndexKey(parsed.userId), hash);
+          await this.redis.srem(this.userIndexKey(parsed.userId), hash);
         }
       } catch {
         this.logger.warn('Dropping malformed session record during revoke', 'Auth');
@@ -123,12 +126,11 @@ export class SessionService {
   }
 
   async revokeAllForUser(userId: string): Promise<number> {
-    const client = this.redis.getClient();
-    const hashes = await client.smembers(this.userIndexKey(userId));
+    const hashes = await this.redis.smembers(this.userIndexKey(userId));
     if (hashes.length > 0) {
-      await client.del(hashes.map((hash) => this.sessionKey(hash)));
+      await this.redis.del(hashes.map((hash) => this.sessionKey(hash)));
     }
-    await client.del(this.userIndexKey(userId));
+    await this.redis.del(this.userIndexKey(userId));
     return hashes.length;
   }
 
@@ -155,10 +157,9 @@ export class SessionService {
     windowSeconds: number,
   ): Promise<number> {
     const key = this.attemptKey(emailLower);
-    const count = await this.redis.getClient().incr(key);
-    if (count === 1) {
-      await this.redis.getClient().expire(key, windowSeconds);
-    }
+    // Wrapped incr sets the window TTL on first hit; Redis outages surface
+    // as 503 instead of raw driver errors.
+    const count = await this.redis.incr(key, windowSeconds);
     return Math.max(0, maxAttempts - count);
   }
 

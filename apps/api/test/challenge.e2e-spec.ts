@@ -399,11 +399,23 @@ describe('Challenge (e2e)', () => {
     expect(state.status).toBe('COUNTDOWN');
   });
 
-  it('returns paginated history for the caller', async () => {
-    const history = await challenges.history(memberId, { limit: 5 });
-    expect(history.items.length).toBeGreaterThan(0);
-    expect(history.items[0]?.opponent.id).toBeDefined();
-    expect(history.nextCursor === null || typeof history.nextCursor === 'string').toBe(true);
+  it('returns offset-paginated history for the caller', async () => {
+    const first = await challenges.history(memberId, { limit: 1, offset: 0 });
+    expect(first.items.length).toBeGreaterThan(0);
+    expect(first.items[0]?.opponent.id).toBeDefined();
+    expect(first.total).toBeGreaterThanOrEqual(first.items.length);
+    expect(first.hasMore).toBe(first.offset + first.items.length < first.total);
+    const second = await challenges.history(memberId, { limit: 1, offset: 1 });
+    expect(second.offset).toBe(1);
+    if (second.items.length > 0 && first.total > 1) {
+      expect(second.items[0]?.id).not.toBe(first.items[0]?.id);
+    }
+  });
+
+  it('returns history stats for the caller', async () => {
+    const stats = await challenges.historyStats(memberId, {});
+    expect(stats.matches).toBeGreaterThanOrEqual(0);
+    expect(stats.wins + stats.losses + stats.draws).toBe(stats.matches);
   });
 
   it('exposes the active challenge for the caller', async () => {

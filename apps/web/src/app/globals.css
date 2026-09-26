@@ -139,6 +139,36 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
   }
+  /* Countdown digit pop: punch in, settle (used via arbitrary animate). */
+  @keyframes countdown-pop {
+    0% {
+      transform: scale(1.6);
+      opacity: 0;
+    }
+    40% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  /* Streak flame pop: scale + slight flick (used via arbitrary animate). */
+  @keyframes streak-pop {
+    0% {
+      transform: scale(1) rotate(0deg);
+    }
+    35% {
+      transform: scale(1.45) rotate(-8deg);
+    }
+    60% {
+      transform: scale(0.92) rotate(3deg);
+    }
+    100% {
+      transform: scale(1) rotate(0deg);
+    }
+  }
   /* Restrained motion; honor the OS-level preference entirely. */
   @media (prefers-reduced-motion: reduce) {
     *,
@@ -165,5 +195,24 @@
   }
   ::-webkit-scrollbar-track {
     background: transparent;
+  }
+}
+
+@layer components {
+  /* Theme glow outlines — the single accent treatment for selectable cards.
+     No per-item colors: every folder/area uses primary glow at rest/hover. */
+  .glow-card {
+    @apply border-border transition-all duration-200;
+  }
+  .glow-card:hover {
+    border-color: hsl(var(--primary) / 0.6);
+    box-shadow: 0 0 24px -8px hsl(var(--primary) / 0.35);
+    transform: translateY(-2px);
+  }
+  .glow-card[data-selected='true'] {
+    border-color: hsl(var(--primary) / 0.7);
+    box-shadow:
+      0 0 28px -8px hsl(var(--primary) / 0.45),
+      0 0 0 1px hsl(var(--primary) / 0.25);
   }
 }

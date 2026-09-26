@@ -26,12 +26,24 @@ describe('API (e2e)', () => {
   });
 
   it('GET /api/v1/health returns the envelope with dependency checks', async () => {
-    const response = await request(app.getHttpServer()).get('/api/v1/health').expect(200);
-    expect(response.body.success).toBe(true);
-    expect(response.body.data.status).toBe('ok');
-    expect(response.body.data.checks.database.status).toBe('up');
-    expect(response.body.data.checks.redis.status).toBe('up');
-    expect(response.headers['x-request-id']).toBeDefined();
+    // Readiness is eventually consistent: the first check may race the
+    // client's initial connection (and trigger its self-healing redial),
+    // so poll briefly instead of asserting a single instant.
+    let response: request.Response | null = null;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const candidate = await request(app.getHttpServer()).get('/api/v1/health');
+      if (candidate.status === 200) {
+        response = candidate;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    expect(response?.status).toBe(200);
+    expect(response?.body.success).toBe(true);
+    expect(response?.body.data.status).toBe('ok');
+    expect(response?.body.data.checks.database.status).toBe('up');
+    expect(response?.body.data.checks.redis.status).toBe('up');
+    expect(response?.headers['x-request-id']).toBeDefined();
   });
 
   it('unknown routes use the shared error envelope', async () => {

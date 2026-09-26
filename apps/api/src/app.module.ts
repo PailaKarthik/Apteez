@@ -15,10 +15,13 @@ import { RedisThrottlerStorage } from './common/throttle/redis-throttler.storage
 import { AppLogger } from './common/logger/app-logger';
 import { RedisService } from './redis/redis.service';
 import { type Env, validateEnv } from './config/env';
-import { HealthModule } from './health/health.module';
-import { RedisModule } from './redis/redis.module';
+import { FeatureFlagsModule } from './config/feature-flags.module';
+import { AiModule } from './modules/ai/ai.module';
+import { EmailModule } from './modules/email/email.module';
+import { HealthModule } from './health/health.module';import { RedisModule } from './redis/redis.module';
 import { StorageModule } from './storage/storage.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { ChallengeModule } from './modules/challenge/challenge.module';
@@ -27,13 +30,17 @@ import { ContributionModule } from './modules/contribution/contribution.module';
 import { DiscussionModule } from './modules/discussion/discussion.module';
 import { EventsModule } from './modules/events/events.module';
 import { FavoritesModule } from './modules/favorites/favorites.module';
+import { FeedbackModule } from './modules/feedback/feedback.module';
 import { LeaderboardModule } from './modules/leaderboard/leaderboard.module';
 import { LearningModule } from './modules/learning/learning.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { ProblemsModule } from './modules/problems/problems.module';
+import { ProfileModule } from './modules/profile/profile.module';
 import { QueueModule } from './queue/queue.module';
 import { RatingModule } from './modules/rating/rating.module';
 import { RewardsModule } from './modules/rewards/rewards.module';
+import { SearchModule } from './modules/search/search.module';
+import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 import { SubmissionsModule } from './modules/submissions/submissions.module';
 import { UsersModule } from './modules/users/users.module';
 
@@ -55,25 +62,18 @@ import { UsersModule } from './modules/users/users.module';
     ThrottlerModule.forRootAsync({
       inject: [ConfigService, RedisService, AppLogger],
       useFactory: (config: ConfigService<Env, true>, redis: RedisService, logger: AppLogger) => ({
+        // Single `default` throttler on purpose: @nestjs/throttler evaluates
+        // EVERY configured throttler sequentially per request (one Upstash
+        // Lua eval each, ~45ms+ apiece), so N named throttlers add N× latency
+        // and N× billed commands to every call. Tight per-route budgets live
+        // on the route itself via @Throttle({ default: { limit, ttl } }) —
+        // see auth (20/min) and practice answers (60/min). The old
+        // auth/practice/challenge named buckets were merged into those
+        // route-level defaults with identical numbers.
         throttlers: [
           {
             ttl: config.get('THROTTLE_TTL_SECONDS', { infer: true }) * 1000,
             limit: config.get('THROTTLE_LIMIT', { infer: true }),
-          },
-          {
-            name: 'auth',
-            ttl: config.get('AUTH_RATE_WINDOW_SECONDS', { infer: true }) * 1000,
-            limit: config.get('AUTH_RATE_LIMIT', { infer: true }),
-          },
-          {
-            name: 'practice',
-            ttl: config.get('PRACTICE_RATE_WINDOW_SECONDS', { infer: true }) * 1000,
-            limit: config.get('PRACTICE_RATE_LIMIT', { infer: true }),
-          },
-          {
-            name: 'challenge',
-            ttl: config.get('CHALLENGE_RATE_WINDOW_SECONDS', { infer: true }) * 1000,
-            limit: config.get('CHALLENGE_RATE_LIMIT', { infer: true }),
           },
         ],
         storage: new RedisThrottlerStorage(redis, logger),
@@ -82,12 +82,16 @@ import { UsersModule } from './modules/users/users.module';
     CommonModule,
     PrismaModule,
     RedisModule,
+    EmailModule,
+    FeatureFlagsModule,
     QueueModule,
     StorageModule,
     HealthModule,
+    AiModule,
     AuthModule,
     UsersModule,
     ProblemsModule,
+    ProfileModule,
     CatalogModule,
     SubmissionsModule,
     FavoritesModule,
@@ -99,9 +103,13 @@ import { UsersModule } from './modules/users/users.module';
     DiscussionModule,
     EventsModule,
     ContributionModule,
+    FeedbackModule,
     RewardsModule,
+    SearchModule,
+    RecommendationsModule,
     NotificationModule,
     AdminModule,
+    AnalyticsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: HttpExceptionFilter },

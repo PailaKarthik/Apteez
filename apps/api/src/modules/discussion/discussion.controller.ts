@@ -32,6 +32,7 @@ import type {
   DiscussionThreadSummaryDto,
   PaginatedData,
 } from '@apteez/types';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser, type RequestUser } from '../../common/decorators/current-user.decorator';
 import { OptionalAuth } from '../../common/decorators/auth.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -66,6 +67,8 @@ export class DiscussionController {
     return this.discussions.detail(id, query, user);
   }
 
+  // Thread creation is user-generated content: own ceiling against spam.
+  @Throttle({ default: { limit: 60, ttl: 60000 } })
   @Post()
   async create(
     @Body(new ZodValidationPipe(discussionCreateThreadSchema)) body: DiscussionCreateThreadInput,

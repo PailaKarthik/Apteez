@@ -1,0 +1,44 @@
+# Version control
+.git/
+.gitignore
+
+# Dependencies (reinstalled deterministically from the lockfile).
+# **/ forms also exclude workspace-nested dirs: without them, host
+# node_modules (Windows junctions) would overwrite the image's symlinks.
+**/node_modules/
+.pnpm-store/
+
+# Build outputs (rebuilt inside the image)
+**/dist/
+**/build/
+**/.next/
+**/out/
+**/coverage/
+.turbo/
+
+# Local runtime data and caches
+.data/
+*.tsbuildinfo
+
+# Environment and secrets — never baked into images.
+# Runtime configuration is injected via the environment.
+.env
+.env.*
+!.env.example
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# Docs and local tooling not needed at runtime
+docs/*.md
+README.md
+STARTUP.md
+WORKING.md
+ARCHITECTURE.md
+DEPLOYMENT.md
+SECURITY.md
+AI.md

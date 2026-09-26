@@ -1,6 +1,8 @@
+import { type OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   ConnectedSocket,
+  MessageBody,
   type OnGatewayConnection,
   type OnGatewayDisconnect,
   type OnGatewayInit,
@@ -11,13 +13,23 @@ import {
 import type { Server, Socket } from 'socket.io';
 import type { Env } from '../../config/env';
 import { AppLogger } from '../../common/logger/app-logger';
+import { AppError } from '../../common/errors/app-error';
+import { RedisService } from '../../redis/redis.service';
+import { redisKeys } from '../../redis/redis-keys';
 import { SessionService } from '../auth/session.service';
 import { ChallengeService } from './challenge.service';
 import { ChallengeRealtime } from './challenge.realtime';
 import { ChallengeCoordinator } from './challenge.coordinator';
-import { ChallengeStateError, QuestionNotActiveError, ReadingTimeError } from './challenge.errors';
-import { challengeAnswerSchema, startMatchmakingSchema } from '@apteez/validation';
-import type { ChallengeSocketError } from '@apteez/types';
+import {
+  challengeAnswerSchema,
+  challengeSubscribeSchema,
+  startMatchmakingSchema,
+} from '@apteez/validation';
+import type {
+  ChallengeAnswerAckDto,
+  ChallengeOpponentProgressDto,
+  ChallengeSocketError,
+} from '@apteez/types';
 
 interface AuthedSocket extends Socket {
   data: {
@@ -30,13 +42,19 @@ interface AuthedSocket extends Socket {
  * Live challenge transport. The socket is a thin shell over the authoritative
  * ChallengeService/Coordinator — it authenticates the handshake, joins the
  * challenge room, forwards answer submissions and pushes per-player state.
- * No competitive decision is made here.
+ * No competitive decision is made here. Flood protection is a best-effort
+ * per-user counter (fail-open when Redis is down, matching the HTTP
+ * throttler); the service layer remains the real backstop.
  */
+const WS_EVENT_LIMIT = 60;
+const WS_EVENT_WINDOW_SECONDS = 60;
 @WebSocketGateway({
   namespace: '/challenge',
   cors: { credentials: true },
 })
-export class ChallengeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+export class ChallengeGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy
+{
   @WebSocketServer()
   server!: Server;
 
@@ -46,6 +64,7 @@ export class ChallengeGateway implements OnGatewayInit, OnGatewayConnection, OnG
     private readonly challenges: ChallengeService,
     private readonly realtime: ChallengeRealtime,
     private readonly coordinator: ChallengeCoordinator,
+    private readonly redis: RedisService,
     private readonly logger: AppLogger,
   ) {}
 
@@ -61,7 +80,15 @@ export class ChallengeGateway implements OnGatewayInit, OnGatewayConnection, OnG
   }
 
   async handleConnection(client: AuthedSocket): Promise<void> {
-    const userId = await this.resolveUser(client);
+    let userId: string | null = null;
+    try {
+      userId = await this.resolveUser(client);
+    } catch (error) {
+      this.logger.warn(
+        `challenge.socket.auth-failed socket=${client.id} ${error instanceof Error ? error.message : String(error)}`,
+        'Challenge',
+      );
+    }
     if (!userId) {
       client.emit('challenge:error', {
         code: 'AUTH_REQUIRED',
@@ -89,11 +116,14 @@ export class ChallengeGateway implements OnGatewayInit, OnGatewayConnection, OnG
   @SubscribeMessage('challenge:matchmaking:start')
   async onStartMatchmaking(
     @ConnectedSocket() client: AuthedSocket,
-    payload: unknown,
+    @MessageBody() payload: unknown,
   ): Promise<{ ok: boolean }> {
-    const userId = client.data.userId;
+    const userId = await this.ensureUser(client);
     if (!userId) {
       this.fail(client, 'AUTH_REQUIRED', 'Sign in to play.');
+      return { ok: false };
+    }
+    if (!(await this.checkFlood(client, userId, 'challenge:matchmaking:start'))) {
       return { ok: false };
     }
     const parsed = startMatchmakingSchema.safeParse(payload);
@@ -112,23 +142,39 @@ export class ChallengeGateway implements OnGatewayInit, OnGatewayConnection, OnG
 
   @SubscribeMessage('challenge:matchmaking:cancel')
   async onCancelMatchmaking(@ConnectedSocket() client: AuthedSocket): Promise<{ ok: boolean }> {
-    const userId = client.data.userId;
+    const userId = await this.ensureUser(client);
     if (!userId) {
       return { ok: false };
     }
-    await this.coordinator.cancelMatchmaking(userId);
-    return { ok: true };
+    if (!(await this.checkFlood(client, userId, 'challenge:matchmaking:cancel'))) {
+      return { ok: false };
+    }
+    try {
+      await this.coordinator.cancelMatchmaking(userId);
+      return { ok: true };
+    } catch (error) {
+      this.failFromError(client, error);
+      return { ok: false };
+    }
   }
 
   @SubscribeMessage('challenge:subscribe')
   async onSubscribe(
     @ConnectedSocket() client: AuthedSocket,
-    payload: { challengeId?: unknown },
+    @MessageBody() payload: unknown,
   ): Promise<{ ok: boolean }> {
-    const userId = client.data.userId;
-    const challengeId = typeof payload?.challengeId === 'string' ? payload.challengeId : undefined;
-    if (!userId || !challengeId) {
+    const userId = await this.ensureUser(client);
+    if (!userId) {
+      this.fail(client, 'AUTH_REQUIRED', 'Sign in to join a challenge.');
+      return { ok: false };
+    }
+    const parsed = challengeSubscribeSchema.safeParse(payload);
+    if (!parsed.success) {
       this.fail(client, 'VALIDATION_ERROR', 'A challenge id is required.');
+      return { ok: false };
+    }
+    const { challengeId } = parsed.data;
+    if (!(await this.checkFlood(client, userId, 'challenge:subscribe'))) {
       return { ok: false };
     }
     try {
@@ -146,11 +192,14 @@ export class ChallengeGateway implements OnGatewayInit, OnGatewayConnection, OnG
   @SubscribeMessage('challenge:answer')
   async onAnswer(
     @ConnectedSocket() client: AuthedSocket,
-    payload: unknown,
-  ): Promise<{ ok: boolean }> {
-    const userId = client.data.userId;
+    @MessageBody() payload: unknown,
+  ): Promise<ChallengeAnswerAckDto | { ok: boolean }> {
+    const userId = await this.ensureUser(client);
     if (!userId) {
       this.fail(client, 'AUTH_REQUIRED', 'Sign in to submit answers.');
+      return { ok: false };
+    }
+    if (!(await this.checkFlood(client, userId, 'challenge:answer'))) {
       return { ok: false };
     }
     const parsed = challengeAnswerSchema.safeParse(payload);
@@ -159,20 +208,42 @@ export class ChallengeGateway implements OnGatewayInit, OnGatewayConnection, OnG
       return { ok: false };
     }
     try {
+      // The ack is the confirmation: it carries the next question plus both
+      // scores, so the UI advances instantly. The old path returned only
+      // `{ ok: true }` and made the client wait for a full state rebuild
+      // (several slow round trips) before showing the next question.
       const ack = await this.challenges.submitAnswer(userId, parsed.data);
       client.emit('challenge:answer:ack', ack);
-      const challenge = await this.challenges.loadChallenge(parsed.data.challengeId);
-      await this.coordinator.pushOpponentProgress(challenge.id, userId);
-      if (challenge.status === 'COMPLETED' || challenge.status === 'ABANDONED') {
-        await this.coordinator.pushState(challenge.id);
-      } else {
-        const state = await this.challenges.buildState(challenge, userId);
-        client.emit('challenge:state', state);
-      }
-      return { ok: true };
+      // Fan-out continues in the background: opponent progress + terminal
+      // push use cheap selects only, never blocking the acknowledgment.
+      void this.afterAnswer(parsed.data.challengeId, userId, ack.selfProgress);
+      return ack;
     } catch (error) {
       this.failFromError(client, error);
       return { ok: false };
+    }
+  }
+
+  /**
+   * Post-ack fan-out (fire-and-forget). Mid-game this is just the opponent
+   * progress push; on a terminal challenge the full state (with `completed`
+   * events) follows. Failures only log — the answer itself is already stored.
+   */
+  private async afterAnswer(
+    challengeId: string,
+    userId: string,
+    progress: ChallengeOpponentProgressDto,
+  ): Promise<void> {
+    try {
+      await this.coordinator.pushOpponentProgress(challengeId, userId, progress);
+      if (await this.challenges.isTerminalStatus(challengeId)) {
+        await this.coordinator.pushState(challengeId);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `challenge.answer.fanout-failed id=${challengeId} ${error instanceof Error ? error.message : String(error)}`,
+        'Challenge',
+      );
     }
   }
 
@@ -180,6 +251,9 @@ export class ChallengeGateway implements OnGatewayInit, OnGatewayConnection, OnG
   async onLeave(@ConnectedSocket() client: AuthedSocket): Promise<{ ok: boolean }> {
     const { userId, challengeId } = client.data;
     if (!userId || !challengeId) {
+      return { ok: false };
+    }
+    if (!(await this.checkFlood(client, userId, 'challenge:leave'))) {
       return { ok: false };
     }
     try {
@@ -203,6 +277,26 @@ export class ChallengeGateway implements OnGatewayInit, OnGatewayConnection, OnG
     return session?.userId ?? null;
   }
 
+  /**
+   * Emits can race the async handshake auth: if the socket isn't identified
+   * yet, resolve from the handshake now instead of failing the action.
+   */
+  private async ensureUser(client: AuthedSocket): Promise<string | null> {
+    if (client.data.userId) {
+      return client.data.userId;
+    }
+    const userId = await this.resolveUser(client).catch(() => null);
+    if (userId) {
+      client.data.userId = userId;
+      try {
+        await client.join(this.userRoom(userId));
+      } catch {
+        // Join failure must not fail the action; realtime is best-effort.
+      }
+    }
+    return userId;
+  }
+
   private readCookie(header: string | undefined, name: string): string | undefined {
     if (!header) {
       return undefined;
@@ -224,25 +318,55 @@ export class ChallengeGateway implements OnGatewayInit, OnGatewayConnection, OnG
     return `challenge:${challengeId}`;
   }
 
+  /**
+   * Best-effort per-user flood guard. Fail-open when Redis is unavailable
+   * (matching the HTTP throttler); the service layer still validates every
+   * payload, so this only sheds obvious floods.
+   */
+  private async checkFlood(client: AuthedSocket, userId: string, event: string): Promise<boolean> {
+    try {
+      const count = await this.redis.incr(
+        redisKeys.websocketRate(userId, event),
+        WS_EVENT_WINDOW_SECONDS,
+      );
+      if (count > WS_EVENT_LIMIT) {
+        this.fail(client, 'RATE_LIMITED', 'Too many requests. Slow down and try again.');
+        return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  }
+
+  /** Graceful shutdown: stop accepting live play, then disconnect sockets. */
+  async onModuleDestroy(): Promise<void> {
+    try {
+      this.server?.emit('challenge:shutdown', {
+        code: 'SERVER_SHUTDOWN',
+        message: 'Server is restarting. Reconnect shortly.',
+      });
+      this.server?.disconnectSockets(true);
+      this.server?.close();
+    } catch (error) {
+      this.logger.warn(
+        `challenge.socket.shutdown-failed ${error instanceof Error ? error.message : String(error)}`,
+        'Challenge',
+      );
+    }
+  }
+
   private fail(client: AuthedSocket, code: string, message: string): void {
     client.emit('challenge:error', { code, message } satisfies ChallengeSocketError);
   }
 
   private failFromError(client: AuthedSocket, error: unknown): void {
-    if (
-      error instanceof ChallengeStateError ||
-      error instanceof QuestionNotActiveError ||
-      error instanceof ReadingTimeError
-    ) {
+    // Only AppError subclasses carry client-safe codes/messages by
+    // construction. Anything else is logged with its stack and replaced —
+    // never forward arbitrary `.code`/`.message` properties to clients.
+    if (error instanceof AppError) {
       this.fail(client, error.code, error.message);
       return;
-    }
-    if (error instanceof Error && 'code' in error && 'message' in error) {
-      const coded = error as { code: unknown; message: string };
-      if (typeof coded.code === 'string') {
-        this.fail(client, coded.code, coded.message);
-        return;
-      }
     }
     this.logger.error(
       `challenge.socket.error ${error instanceof Error ? error.message : String(error)}`,

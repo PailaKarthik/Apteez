@@ -2,6 +2,7 @@ import {
   CalendarDays,
   Compass,
   Crown,
+  Gift,
   Home,
   MessagesSquare,
   PenLine,
@@ -23,4 +24,5 @@ export const NAV_ICONS: Record<NavIcon, LucideIcon> = {
   calendar: CalendarDays,
   target: Target,
   pen: PenLine,
+  gift: Gift,
 };

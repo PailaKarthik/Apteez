@@ -23,21 +23,26 @@ export interface CollectionProblemsParams {
 }
 
 /** All of the caller's collections, default Favorites first. */
-export function useFavoriteCollections() {
+export function useFavoriteCollections(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: COLLECTIONS_KEY,
     queryFn: () => apiFetch<FavoriteCollectionDto[]>('/favorite-collections'),
+    enabled: opts?.enabled ?? true,
     staleTime: 30_000,
   });
 }
 
 /** Paginated problems in the default Favorites collection. */
-export function useFavoriteProblems(params: CollectionProblemsParams = {}) {
+export function useFavoriteProblems(
+  params: CollectionProblemsParams = {},
+  opts?: { enabled?: boolean },
+) {
   const { sort = 'added_desc', limit = 24 } = params;
   return useQuery({
     queryKey: [...FAVORITES_KEY, sort, limit],
     queryFn: () =>
       apiFetch<CursorPage<FavoriteProblemDto>>(`/favorites?sort=${sort}&limit=${limit}`),
+    enabled: opts?.enabled ?? true,
     staleTime: 15_000,
   });
 }
