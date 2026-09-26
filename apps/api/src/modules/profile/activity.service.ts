@@ -69,7 +69,8 @@ export class ActivityService {
         orderBy: { date: 'desc' },
         select: { date: true },
       });
-      const todayKey = dayKeyInTimezone(new Date(), timezone);
+      // Date.now() (not new Date()) so tests can pin the clock; identical in prod.
+      const todayKey = dayKeyInTimezone(new Date(Date.now()), timezone);
       const fromDate = latest
         ? new Date(latest.date.getTime() + 86_400_000)
         : new Date(Date.now() - 366 * 86_400_000);
@@ -186,7 +187,7 @@ export class ActivityService {
       select: { timezone: true },
     });
     const timezone = user?.timezone ?? 'UTC';
-    const todayKey = dayKeyInTimezone(new Date(), timezone);
+    const todayKey = dayKeyInTimezone(new Date(Date.now()), timezone);
     const keys: string[] = [];
     for (let offset = days - 1; offset >= 0; offset -= 1) {
       const cursor = new Date(`${todayKey}T00:00:00.000Z`);
@@ -228,7 +229,7 @@ export class ActivityService {
       select: { timezone: true },
     });
     const timezone = user?.timezone ?? 'UTC';
-    const todayKey = dayKeyInTimezone(new Date(), timezone);
+    const todayKey = dayKeyInTimezone(new Date(Date.now()), timezone);
     const rows = await this.prisma.userActivityDaily.findMany({
       where: { userId, totalActivityCount: { gt: 0 } },
       select: { date: true },
