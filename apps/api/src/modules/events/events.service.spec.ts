@@ -330,6 +330,40 @@ describe('EventsService authorization', () => {
     );
   });
 
+  it('caps members at 2 created events per calendar month, admins exempt', async () => {
+    const input = {
+      title: 'Valid title here',
+      description: 'A sufficiently long description for creation.',
+      eventType: 'CONTEST',
+      visibility: 'PUBLIC',
+      difficulty: 'MEDIUM',
+      durationMinutes: 60,
+      startAt: new Date('2026-08-01T10:00:00.000Z'),
+      endAt: new Date('2026-08-01T12:00:00.000Z'),
+      isPaid: false,
+      problemIds: [],
+    } as never;
+
+    const full = createService(baseEvent({}));
+    (full.prisma.event.count as jest.Mock).mockResolvedValue(2);
+    await expect(full.service.create(input, MEMBER)).rejects.toThrow(/2 events per month/);
+    expect(full.prisma.event.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ organizerId: 'user1' }),
+      }),
+    );
+
+    const room = createService(baseEvent({}));
+    (room.prisma.event.count as jest.Mock).mockResolvedValue(1);
+    (room.prisma as unknown as { _tx: { event: { create: jest.Mock } } })._tx.event.create.mockResolvedValue({ id: 'e-ok' });
+    await expect(room.service.create(input, MEMBER)).resolves.toBeDefined();
+
+    const admin = createService(baseEvent({}));
+    (admin.prisma as unknown as { _tx: { event: { create: jest.Mock } } })._tx.event.create.mockResolvedValue({ id: 'e-admin' });
+    await expect(admin.service.create(input, ADMIN)).resolves.toBeDefined();
+    expect(admin.prisma.event.count as jest.Mock).not.toHaveBeenCalled();
+  });
+
   it('filters official vs member-hosted origins', async () => {
     const { service, prisma } = createService(baseEvent({}));
     await service.list({ phase: 'active', origin: 'official', page: 1, pageSize: 20 }, MEMBER);

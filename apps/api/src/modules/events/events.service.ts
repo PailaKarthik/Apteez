@@ -50,6 +50,8 @@ const FINALIZE_LOCK_TTL_MS = 10_000;
 const CLOSE_LOCK_TTL_MS = 30_000;
 const REGISTER_LOCK_TTL_MS = 5_000;
 const LIST_CACHE_TTL_S = 30;
+/** Members may create at most this many events per calendar month (UTC). */
+const MAX_USER_EVENTS_PER_MONTH = 2;
 
 interface Caller {
   id: string;
@@ -338,6 +340,20 @@ export class EventsService {
   async create(input: EventCreateInput, caller: Caller): Promise<EventDetailDto> {
     // Any signed-in user may create: admin-hosted events are flagged official,
     // everything else is a member-hosted event (always DRAFT until published).
+    // Members are capped at MAX_USER_EVENTS_PER_MONTH creations per calendar
+    // month (UTC) — admins minting official events are exempt.
+    if (!this.isAdmin(caller)) {
+      const now = new Date();
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const createdThisMonth = await this.prisma.event.count({
+        where: { organizerId: caller.id, createdAt: { gte: monthStart } },
+      });
+      if (createdThisMonth >= MAX_USER_EVENTS_PER_MONTH) {
+        throw new EventValidationError(
+          'You can create up to 2 events per month. Delete an old draft or wait for next month.',
+        );
+      }
+    }
     assertNoActiveContent(input.title, 'title');
     assertNoActiveContent(input.description, 'description');
     assertNoActiveContent(input.rules ?? null, 'rules');

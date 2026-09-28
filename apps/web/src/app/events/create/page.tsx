@@ -51,6 +51,7 @@ function CreateGate(): React.JSX.Element {
       {!access.allowed ? (
         <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
           You are hosting a member event — it stays a draft until an admin publishes it.
+          Members can create up to 2 events per month.
         </p>
       ) : null}
       <EventCreateWizard />

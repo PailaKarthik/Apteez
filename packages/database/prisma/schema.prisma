@@ -1622,8 +1622,8 @@ model Event {
   status      EventStatus     @default(DRAFT)
   difficulty  Difficulty      @default(MEDIUM)
   // Provenance: true when created by an admin (official ApteeZ event), false
-  // for community events created by regular users. Drives Official/Community
-  // badges and list filters — NOT access (see visibility).
+  // for member-hosted events. Drives the Official badge — NOT access
+  // (see visibility).
   isOfficial  Boolean         @default(false)
   // Entry code for private events: participants must supply it to register or
   // join (managers, existing participants and invitees bypass). Plaintext by
