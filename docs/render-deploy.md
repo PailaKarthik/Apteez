@@ -5,11 +5,15 @@ Target topology (all Singapore — the single-region rule in DEPLOYMENT.md §7):
 ```
 Browser (India)
   → Vercel web, region sin1 ......... Next.js frontend (free)
-  → Render apteez-api, Singapore ..... NestJS API, Starter (never sleeps)
-  → Render apteez-worker, Singapore .. BullMQ worker, Starter
+  → Render apteez-api, Singapore ..... NestJS API (+ migrate on boot), free
   → Neon PostgreSQL, ap-southeast-1 .. pooled runtime URL (only permanent DB)
   → Upstash Redis, Singapore ......... sessions / throttle / queues / caches
 ```
+
+Free tier has no background-worker type, so there is no `apteez-worker`
+yet — the blueprint carries it commented out for the Starter move. Queued
+background extras (emails, embeddings, notifications) wait for a worker;
+matches, answers and ratings settle through synchronous fallbacks.
 
 Total baseline cost: $0 on the free plan (card-free), ~$14/mo on Starter
 (2 × $7) for sleep-free production. Everything else free tier.
@@ -37,9 +41,9 @@ Staying warm on free (partial, but free):
    monitor `https://<api>/api/v1/health/live` every 10 minutes. Note this
    keeps the container burning hours — it trades sleep for budget.
 
-When real users arrive: flip both services to `plan: starter` in
-`render.yaml` (never sleeps, outside the hour budget), add the card once,
-redeploy. One-line change, everything else identical.
+When real users arrive: flip the API to `plan: starter` and uncomment the
+worker block in `render.yaml` (never sleeps, outside the hour budget), add
+the card once, redeploy. Everything else identical.
 
 ## 1. Prerequisites
 
@@ -59,11 +63,10 @@ Do not reuse a US/EU Redis: every session lookup and throttle check pays
 that region gap (measured 266ms vs ~5ms same-region). Switching Redis logs
 everyone out once — Redis holds nothing permanent by design.
 
-## 3. Render: API + worker from the blueprint (10 min)
+## 3. Render: API from the blueprint (10 min)
 
 1. Render dashboard → New → **Blueprint** → connect the repo. Render reads
-   `render.yaml` and proposes `apteez-api` (web) + `apteez-worker`
-   (background), both Singapore/Starter.
+   `render.yaml` and proposes `apteez-api` (web, Singapore, free).
 2. Fill every `sync: false` secret from your `.env`:
    `DATABASE_URL`, `DIRECT_URL`, `UPSTASH_REDIS_URL` (Step 2),
    `COOKIE_SECRET` (generate fresh — never reuse dev secrets verbatim;
@@ -71,15 +74,18 @@ everyone out once — Redis holds nothing permanent by design.
 3. Temporary placeholders (replaced in §4): `CORS_ORIGINS`,
    `APP_URL`, `API_URL`, `GOOGLE_CALLBACK_URL` → `https://placeholder.local`.
 4. Deploy. First build takes 5–10 min (`pnpm install` + workspace builds).
-   `preDeployCommand` runs `prisma migrate deploy` automatically (uses
-   `DIRECT_URL`; expects "No pending migrations").
+   The start command runs `prisma migrate deploy` on every boot (uses
+   `DIRECT_URL`; expects "No pending migrations") — free tier rejects
+   pre-deploy hooks, so migration rides along with startup instead of
+   gating the rollout.
 5. Verify: `https://<your-api>.onrender.com/api/v1/health` → HTTP 200 with
    `database: up, redis: up`. Copy the **actual** API URL from the
    dashboard (Render may append a suffix to the name).
 
-What Render does per deploy: build → migrate → swap traffic only if
-`/api/v1/health/live` passes. A failed migration blocks the rollout
-instead of shipping broken code.
+What Render does per deploy: build → boot (migrate inline) → route traffic
+only if `/api/v1/health/live` passes. After each deploy, glance at the logs
+for `No pending migrations to apply` — a failed migration no longer blocks
+the rollout automatically, so this one log line is your gate.
 
 ## 4. Wire the real URLs (5 min)
 
@@ -149,6 +155,9 @@ Then click through the real flows on the Vercel URL:
 | API crash-loop, `P2037`/prepared-statement errors                   | `DATABASE_URL` missing `?pgbouncer=true`                                         | Pooled URL must end `?sslmode=require&pgbouncer=true&connection_limit=10` |
 | Boot fail: `DATABASE_URL is required` / `COOKIE_SECRET must be set` | `validateEnv` fail-fast (§3 secrets empty or placeholder)                        | Fill every `sync: false` var; `COOKIE_SECRET` ≠ `change-me-in-production` |
 | Deploy stuck at migrate                                             | `DIRECT_URL` points at pooler host (`-pooler`) — DDL can't run through PgBouncer | Use the **direct** Neon URL for `DIRECT_URL`                              |
+| Blueprint rejected: `pre-deploy command is not supported`           | Free tier forbids `preDeployCommand`                                             | Fixed in `render.yaml`: migrate runs inside `startCommand` — pull latest  |
+| Blueprint rejected: worker `service type is not available`          | Free tier has no background-worker type                                          | Fixed: worker block is commented out — pull latest, deploy API only       |
+| Build fails: `prisma: not found`                                    | `NODE_ENV=production` during build makes pnpm skip devDependencies (CLIs gone)   | Fixed: build unsets `NODE_ENV`, runtime exports it — pull latest          |
 | Browser: CORS error on every API call                               | `CORS_ORIGINS` ≠ Vercel URL (scheme/host must match exactly)                     | Fix in Render env (§4), no Vercel change needed                           |
 | Google login: `redirect_uri_mismatch`                               | Callback not registered verbatim                                                 | Google Console URI == `GOOGLE_CALLBACK_URL` char-for-char                 |
 | Vercel build: `Cannot find module '@apteez/ui'`                     | Install ran inside `apps/web`, workspace unresolved                              | Use the §5 install/build overrides exactly                                |

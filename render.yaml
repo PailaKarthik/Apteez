@@ -1,13 +1,18 @@
 # Render Blueprint — ApteeZ backend in Singapore.
 #
 # Setup: Render dashboard → New → Blueprint → pick this repo. Render reads
-# this file, creates the API + worker below, and prompts once for every
+# this file, creates the API service below, and prompts once for every
 # `sync: false` secret. No credit card is needed on the free plan.
 #
 # Plan note (read before changing): `free` sleeps after ~15 idle minutes and
 # shares 750 instance-hours/month across the account — fine for testing, not
 # for live matches (a sleeping container cold-boots 30-60s mid-countdown).
-# For production flip both services to `plan: starter` (never sleeps).
+# Free tier also has NO background-worker type, so only the API ships here;
+# the worker block below stays commented until Starter. Queued background
+# extras (emails, embeddings, notifications) wait for a worker, but matches,
+# answers and ratings still settle through synchronous fallbacks.
+# For production flip the API to `plan: starter` and uncomment the worker
+# (never sleeps).
 #
 # Rules this file follows (see DEPLOYMENT.md + apps/api/src/config/env.ts):
 # - PORT is never set here: Render injects its own and main.ts binds 0.0.0.0.
@@ -25,6 +30,7 @@ services:
     plan: free
     runtime: node
     buildCommand: >-
+      unset NODE_ENV &&
       corepack enable &&
       pnpm install --frozen-lockfile &&
       pnpm --filter @apteez/database db:generate &&
@@ -38,15 +44,19 @@ services:
     # on Postgres advisory locks). Uses DIRECT_URL. NOTE: this uses `prisma`
     # directly, NOT the pnpm db:deploy script — that wrapper reads a local
     # .env file which does not exist on Render.
+    #
+    # NODE_ENV is exported inline (NOT as an env var): with NODE_ENV set,
+    # pnpm skips devDependencies — uninstalling the Prisma/nest CLIs and
+    # failing the build with `prisma: not found`. The buildCommand unsets it
+    # first so the full install lands; only the runtime below is production.
     startCommand: >-
+      export NODE_ENV=production &&
       pnpm --filter @apteez/database exec prisma migrate deploy &&
       pnpm --filter @apteez/api start
     healthCheckPath: /api/v1/health/live
     envVars:
       - key: NODE_VERSION
         value: 20
-      - key: NODE_ENV
-        value: production
       - key: LOG_LEVEL
         value: info
       - key: TRUST_PROXY
@@ -99,65 +109,65 @@ services:
       - key: AI_DAILY_LIMIT
         value: 50
 
-  - type: worker
-    name: apteez-worker
-    region: singapore
-    plan: free
-    runtime: node
-    buildCommand: >-
-      corepack enable &&
-      pnpm install --frozen-lockfile &&
-      pnpm --filter @apteez/database db:generate &&
-      pnpm --filter @apteez/types build &&
-      pnpm --filter @apteez/config build &&
-      pnpm --filter @apteez/validation build &&
-      pnpm --filter @apteez/database build &&
-      pnpm --filter @apteez/api build
-    # No preDeployCommand here either (free tier rejects it): the API service
-    # migrates on boot, and `migrate deploy` is idempotent — the worker's own
-    # run simply no-ops once the API's run lands (advisory-lock serialized).
-    startCommand: >-
-      pnpm --filter @apteez/database exec prisma migrate deploy &&
-      pnpm --filter @apteez/api start:worker
-    envVars:
-      - key: NODE_VERSION
-        value: 20
-      - key: NODE_ENV
-        value: production
-      - key: LOG_LEVEL
-        value: info
-      - key: DATABASE_URL
-        sync: false
-      - key: DIRECT_URL
-        sync: false
-      - key: UPSTASH_REDIS_URL
-        sync: false
-      - key: COOKIE_SECRET
-        sync: false
-      - key: STORAGE_PROVIDER
-        value: s3
-      - key: S3_ENDPOINT
-        sync: false
-      - key: S3_REGION
-        # Must match the bucket's actual region (signing breaks otherwise).
-        # Asset bucket currently lives in us-east-2 — move it to Singapore
-        # as a follow-up, then flip this value with it.
-        value: us-east-2
-      - key: S3_BUCKET
-        sync: false
-      - key: S3_ACCESS_KEY_ID
-        sync: false
-      - key: S3_SECRET_ACCESS_KEY
-        sync: false
-      - key: RESEND_API_KEY
-        sync: false
-      - key: LLM_API_KEY
-        sync: false
-      - key: LLM_MODEL
-        value: openai/gpt-oss-120b
-      - key: LLM_BASE_URL
-        value: https://api.groq.com/openai/v1
-      - key: EMBEDDING_API_KEY
-        sync: false
-      - key: AI_DAILY_LIMIT
-        value: 50
+  # ---------------------------------------------------------------------------
+  # Worker (COMMENTED OUT — Render free tier has no background-worker type).
+  # Uncomment when moving to Starter: queued background extras (emails,
+  # embeddings, notifications) need it. Keep the whole block in sync with
+  # the API service above when editing env vars.
+  # ---------------------------------------------------------------------------
+  # - type: worker
+  #   name: apteez-worker
+  #   region: singapore
+  #   plan: starter
+  #   runtime: node
+  #   buildCommand: >-
+  #     unset NODE_ENV &&
+  #     corepack enable &&
+  #     pnpm install --frozen-lockfile &&
+  #     pnpm --filter @apteez/database db:generate &&
+  #     pnpm --filter @apteez/types build &&
+  #     pnpm --filter @apteez/config build &&
+  #     pnpm --filter @apteez/validation build &&
+  #     pnpm --filter @apteez/database build &&
+  #     pnpm --filter @apteez/api build
+  #   startCommand: >-
+  #     export NODE_ENV=production &&
+  #     pnpm --filter @apteez/database exec prisma migrate deploy &&
+  #     pnpm --filter @apteez/api start:worker
+  #   envVars:
+  #     - key: NODE_VERSION
+  #       value: 20
+  #     - key: LOG_LEVEL
+  #       value: info
+  #     - key: DATABASE_URL
+  #       sync: false
+  #     - key: DIRECT_URL
+  #       sync: false
+  #     - key: UPSTASH_REDIS_URL
+  #       sync: false
+  #     - key: COOKIE_SECRET
+  #       sync: false
+  #     - key: STORAGE_PROVIDER
+  #       value: s3
+  #     - key: S3_ENDPOINT
+  #       sync: false
+  #     - key: S3_REGION
+  #       value: us-east-2
+  #     - key: S3_BUCKET
+  #       sync: false
+  #     - key: S3_ACCESS_KEY_ID
+  #       sync: false
+  #     - key: S3_SECRET_ACCESS_KEY
+  #       sync: false
+  #     - key: RESEND_API_KEY
+  #       sync: false
+  #     - key: LLM_API_KEY
+  #       sync: false
+  #     - key: LLM_MODEL
+  #       value: openai/gpt-oss-120b
+  #     - key: LLM_BASE_URL
+  #       value: https://api.groq.com/openai/v1
+  #     - key: EMBEDDING_API_KEY
+  #       sync: false
+  #     - key: AI_DAILY_LIMIT
+  #       value: 50
