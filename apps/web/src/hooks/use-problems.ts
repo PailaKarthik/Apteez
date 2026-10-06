@@ -83,7 +83,7 @@ export function usePrefetchProblemsFeed() {
         ),
       getNextPageParam: (lastPage: CursorPage<ProblemSummaryDto>) =>
         lastPage.nextCursor ?? undefined,
-      staleTime: 15_000,
+      staleTime: 60_000,
     });
 }
 
@@ -99,7 +99,8 @@ export function useCategories() {
   return useQuery({
     queryKey: ['catalog', 'categories'],
     queryFn: () => apiFetch<CategoryDto[]>('/categories'),
-    staleTime: 5 * 60_000,
+    staleTime: 10 * 60_000,
+    gcTime: 15 * 60_000,
   });
 }
 
@@ -108,7 +109,8 @@ export function useCategoryTopics(categorySlug: string | undefined) {
     queryKey: ['catalog', 'topics', categorySlug],
     queryFn: () => apiFetch<TopicDto[]>(`/categories/${categorySlug}/topics`),
     enabled: Boolean(categorySlug),
-    staleTime: 5 * 60_000,
+    staleTime: 10 * 60_000,
+    gcTime: 15 * 60_000,
   });
 }
 
@@ -116,6 +118,7 @@ export function useExamTags() {
   return useQuery({
     queryKey: ['catalog', 'exam-tags'],
     queryFn: () => apiFetch<ExamTagDto[]>('/exam-tags'),
-    staleTime: 5 * 60_000,
+    staleTime: 10 * 60_000,
+    gcTime: 15 * 60_000,
   });
 }

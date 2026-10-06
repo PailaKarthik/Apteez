@@ -62,11 +62,13 @@ function createService() {
   const prisma = createPrisma();
   const events = { notifyUser: jest.fn().mockResolvedValue(undefined) };
   const sessions = { revokeAllForUser: jest.fn().mockResolvedValue(2) };
+  const users = { clearAuthProfileCache: jest.fn().mockResolvedValue(undefined) };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const service = new AdminUsersService(
     prisma as unknown as PrismaService,
     events as never,
     sessions as never,
+    users as never,
     logger as never,
   );
   return { service, prisma, events, sessions };

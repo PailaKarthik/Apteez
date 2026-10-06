@@ -1,4 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { problemListQuerySchema, type ProblemListQuery } from '@apteez/validation';
 import type {
   CategoryDto,
@@ -27,6 +28,7 @@ export class CatalogController {
   ) {}
 
   @OptionalAuth()
+  @SkipThrottle()
   @Get('categories')
   async categories(): Promise<CategoryDto[]> {
     return this.catalog.listCategories();
@@ -39,6 +41,7 @@ export class CatalogController {
   }
 
   @OptionalAuth()
+  @SkipThrottle()
   @Get('exam-tags')
   async examTags(): Promise<ExamTagDto[]> {
     return this.catalog.listExamTags();
@@ -49,6 +52,7 @@ export class CatalogController {
    * mix per exam tag. Public; per-user data never included.
    */
   @OptionalAuth()
+  @SkipThrottle()
   @Get('exam-patterns')
   async examPatterns(): Promise<ExamPatternDto[]> {
     return this.catalog.listExamPatterns();
@@ -59,6 +63,7 @@ export class CatalogController {
    * solved progress (zeros when signed out).
    */
   @OptionalAuth()
+  @SkipThrottle()
   @Get('practice-areas')
   async practiceAreas(@CurrentUser() user?: RequestUser): Promise<PracticeAreaDto[]> {
     return this.catalog.listPracticeAreas(user?.id);

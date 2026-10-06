@@ -28,7 +28,16 @@ export function useAuth(): UseQueryResult<AuthUser | null, Error> & {
   user: AuthUser | null;
   isAuthenticated: boolean;
 } {
-  const query = useQuery({ queryKey: AUTH_ME_QUERY_KEY, queryFn: fetchMe, staleTime: 30_000 });
+  // Long stale window on purpose: this query mounts in the topbar of EVERY
+  // page, and /auth/me costs multiple far-region round trips cold. The
+  // server remains authoritative per request (guards re-resolve the session),
+  // so a 2-minute client window only delays UI chrome updates, never access.
+  const query = useQuery({
+    queryKey: AUTH_ME_QUERY_KEY,
+    queryFn: fetchMe,
+    staleTime: 120_000,
+    gcTime: 10 * 60_000,
+  });
   const user = query.data ?? null;
   return { ...query, user, isAuthenticated: user !== null };
 }

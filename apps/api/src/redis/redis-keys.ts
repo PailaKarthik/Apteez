@@ -30,6 +30,9 @@ export const redisKeys = {
   /** Hashed email-OTP record for a user (10-min TTL, few verify attempts). */
   emailOtp: (userId: string): string => `${REDIS_NAMESPACE}:auth:email-otp:${userId}`,
 
+  /** Cached auth profile (roles + permissions flattened); short TTL. */
+  authProfile: (userId: string): string => `${REDIS_NAMESPACE}:auth:profile:${userId}`,
+
   matchmakingQueue: (domainSlug: string): string =>
     `${REDIS_NAMESPACE}:matchmaking:queue:${domainSlug}`,
 

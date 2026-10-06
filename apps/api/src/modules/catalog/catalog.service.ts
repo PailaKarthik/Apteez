@@ -118,15 +118,16 @@ export function assembleExamPatterns(
  * Latency design (measured): from the regions we serve, one Neon pooler
  * round trip costs ~1.5s and parallel queries do NOT overlap (the pooler
  * serializes them), so every method below is exactly ONE SQL round trip and
- * hot anonymous reads sit behind a 30s in-process cache. Never reintroduce
- * Prisma `_count` here — it fires a COUNT per row (N+1) and each costs the
- * same 1.5s.
+ * hot anonymous reads sit behind a 5-minute in-process cache (per-user
+ * practice boards: 60s so solved progress ticks appear quickly). Never
+ * reintroduce Prisma `_count` here — it fires a COUNT per row (N+1) and
+ * each costs the same 1.5s.
  */
 @Injectable()
 export class CatalogService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** 30s in-process cache for anonymous/shared catalog reads (per instance). */
+  /** 5-minute in-process cache for anonymous/shared catalog reads (per instance). */
   private readonly cache = new Map<string, { expiresAt: number; data: unknown }>();
 
   private cached<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
@@ -144,7 +145,7 @@ export class CatalogService {
   }
 
   async listCategories(): Promise<CategoryDto[]> {
-    return this.cached('categories', 30_000, async () => {
+    return this.cached('categories', 5 * 60_000, async () => {
       const rows = await this.prisma.$queryRaw<
         {
           id: string;
@@ -235,7 +236,7 @@ export class CatalogService {
   }
 
   async listExamTags(): Promise<ExamTagDto[]> {
-    return this.cached('exam-tags', 30_000, async () => {
+    return this.cached('exam-tags', 5 * 60_000, async () => {
       const rows = await this.prisma.$queryRaw<
         { id: string; name: string; slug: string; description: string | null; problemCount: number }[]
       >(Prisma.sql`
@@ -265,7 +266,7 @@ export class CatalogService {
    * pooler round trip instead of per-tag queries.
    */
   async listExamPatterns(): Promise<ExamPatternDto[]> {
-    return this.cached('exam-patterns', 30_000, async () => {
+    return this.cached('exam-patterns', 5 * 60_000, async () => {
       const rows = await this.prisma.$queryRaw<
         {
           id: string;
@@ -329,8 +330,8 @@ export class CatalogService {
    */
   async listPracticeAreas(userId?: string): Promise<PracticeAreaDto[]> {
     // Solved progress is per-user: cache anonymous boards globally, user
-    // boards per user (30s — progress ticks appear within half a minute).
-    return this.cached(`practice-areas:${userId ?? 'anon'}`, 30_000, async () => {
+    // boards per user (60s — progress ticks appear within a minute).
+    return this.cached(`practice-areas:${userId ?? 'anon'}`, userId ? 60_000 : 5 * 60_000, async () => {
       const rows = await this.prisma.$queryRaw<
         {
           id: string;

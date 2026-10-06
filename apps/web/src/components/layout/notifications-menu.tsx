@@ -1,6 +1,7 @@
 'use client';
 
 import { Bell } from 'lucide-react';
+import * as React from 'react';
 import {
   Button,
   DropdownMenu,
@@ -18,19 +19,24 @@ import { useMarkAllRead, useNotifications, useUnreadCount } from '@/hooks/use-ev
  * Notifications entry point. Signed-in users see their unread badge plus
  * the latest inbox rows from `GET /notifications`; signed-out users see the
  * intentional empty state. Mark-all-read invalidates the cached queries.
+ *
+ * Latency design: the inbox list only fetches when the dropdown actually
+ * opens — it never joins the initial page-load waterfall (auth + page data
+ * already saturate the pooler). The lightweight unread badge stays eager.
  */
 export function NotificationsMenu(): React.JSX.Element {
   const { user } = useAuth();
   const signedIn = Boolean(user);
+  const [open, setOpen] = React.useState(false);
   const { data: unread } = useUnreadCount({ enabled: signedIn });
-  const { data: inbox } = useNotifications(false, { enabled: signedIn });
+  const { data: inbox } = useNotifications(false, { enabled: signedIn && open });
   const markAllRead = useMarkAllRead();
 
   const unreadCount = unread?.unread ?? 0;
   const items = inbox?.items.slice(0, 5) ?? [];
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" aria-label="Notifications" className="relative">
           <Bell aria-hidden />

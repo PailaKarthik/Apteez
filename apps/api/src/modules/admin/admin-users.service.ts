@@ -5,6 +5,7 @@ import type { AdminUsersQuery, AdminUserStatusInput } from '@apteez/validation';
 import { AppLogger } from '../../common/logger/app-logger';
 import { EventQueueService } from '../../queue/event-queue.service';
 import { SessionService } from '../auth/session.service';
+import { UsersService } from '../users/users.service';
 import { isAdmin, requireSuperAdminForTarget, type AdminCaller } from './admin-access';
 import { AdminConflictError, AdminNotFoundError, AdminValidationError } from './admin.errors';
 
@@ -21,6 +22,7 @@ export class AdminUsersService {
     private readonly prisma: PrismaService,
     private readonly events: EventQueueService,
     private readonly sessions: SessionService,
+    private readonly users: UsersService,
     private readonly logger: AppLogger,
   ) {}
 
@@ -243,6 +245,9 @@ export class AdminUsersService {
         );
       }
     }
+    // Roles/permissions are cached per user (see UsersService) — drop the
+    // entry so status changes apply within the next request, not the TTL.
+    await this.users.clearAuthProfileCache(id);
     const roles = await this.prisma.userRole.findMany({
       where: { userId: id },
       select: { role: { select: { name: true } } },
@@ -336,6 +341,9 @@ export class AdminUsersService {
         },
       });
     });
+    // Role grants are cached per user — drop the entry so the new grants
+    // apply within the next request, not the cache TTL.
+    await this.users.clearAuthProfileCache(id);
     return this.toAdminUser(updated);
   }
 

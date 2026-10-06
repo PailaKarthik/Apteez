@@ -24,8 +24,12 @@ export function Providers({ children }: { children: React.ReactNode }): React.JS
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 30_000,
-            gcTime: 5 * 60_000,
+            // Warm-path bias: with a far-away pooler (~1.5s per round trip),
+            // refetching on every mount/navigation is the main source of
+            // perceived lag. 60s stale keeps back-nav and tab-switch instant;
+            // per-hook staleTimes extend this further for slow-moving data.
+            staleTime: 60_000,
+            gcTime: 10 * 60_000,
             refetchOnWindowFocus: false,
             refetchOnReconnect: 'always',
             retry: shouldRetry,

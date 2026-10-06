@@ -275,7 +275,10 @@ export function useNotifications(unreadOnly = false, opts?: { enabled?: boolean 
         `/notifications?${unreadOnly ? 'unreadOnly=true&' : ''}page=1&pageSize=20`,
       ),
     enabled: opts?.enabled ?? true,
-    staleTime: 15_000,
+    // Inbox is fetched lazily on menu open — keep it warm so reopening is
+    // instant instead of re-paying the round trip every time.
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
   });
 }
 
@@ -284,7 +287,8 @@ export function useUnreadCount(opts?: { enabled?: boolean }) {
     queryKey: ['notifications', 'unread-count'],
     queryFn: () => apiFetch<{ unread: number }>('/notifications/unread-count'),
     enabled: opts?.enabled ?? true,
-    staleTime: 15_000,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
   });
 }
 

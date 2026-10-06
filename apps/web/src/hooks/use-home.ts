@@ -17,7 +17,10 @@ export function useExamPatterns() {
   return useQuery({
     queryKey: ['catalog', 'exam-patterns'],
     queryFn: () => apiFetch<ExamPatternDto[]>('/exam-patterns'),
-    staleTime: 5 * 60_000,
+    // Server caches this for 5 minutes; mirroring that client-side means
+    // repeat visits never pay the pooler round trip at all.
+    staleTime: 10 * 60_000,
+    gcTime: 15 * 60_000,
     // Comfort: back-nav/refresh keeps showing the last folders while a
     // background refetch refreshes them — never a skeleton flash or an
     // error wall when cache exists.
@@ -33,7 +36,8 @@ export function usePracticeAreas() {
   return useQuery({
     queryKey: ['catalog', 'practice-areas'],
     queryFn: () => apiFetch<PracticeAreaDto[]>('/practice-areas'),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
     placeholderData: keepPreviousData,
   });
 }
@@ -50,7 +54,10 @@ export function useProblemsCount(filters: LibraryFilters) {
           solved: filters.solved,
         })}`,
       ),
-    staleTime: 15_000,
+    // COUNT scans the same predicate as the feed — keep it warm across
+    // filter toggles so typing doesn't re-pay a full scan each keystroke.
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
     placeholderData: keepPreviousData,
   });
 }

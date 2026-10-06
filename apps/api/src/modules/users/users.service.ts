@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, PrismaService } from '@apteez/database';
 import type { User } from '@apteez/database';
 import type { AuthUser } from '@apteez/types';
+import { redisKeys } from '../../redis/redis-keys';
+import { RedisService } from '../../redis/redis.service';
 
 export interface CreateUserInput {
   email: string;
@@ -12,6 +14,9 @@ export interface CreateUserInput {
   /** Set when the email was verified by the provider (Google OAuth). */
   emailVerified?: Date | null;
 }
+
+/** Auth-profile cache window: bounds role staleness, skips 2 PG trips/hit. */
+const AUTH_PROFILE_TTL_SECONDS = 60;
 
 /** User with flattened authorization data, as resolved per request. */
 export interface UserAuthProfile extends AuthUser {
@@ -26,7 +31,10 @@ export interface UserAuthProfile extends AuthUser {
  */
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
 
   /**
    * Creates a user with the default `user` role and an empty default
@@ -168,7 +176,19 @@ export class UsersService {
 
   /** Enable/disable an account. Service-level only (admin flows come later). */
   async setActive(id: string, isActive: boolean): Promise<User> {
-    return this.prisma.user.update({ where: { id }, data: { isActive } });
+    const user = await this.prisma.user.update({ where: { id }, data: { isActive } });
+    // Auth profile is cached — drop it so disable/ban takes effect at once.
+    await this.clearAuthProfileCache(id);
+    return user;
+  }
+
+  /** Drop the cached auth profile (role/activation changes, logout-all). */
+  async clearAuthProfileCache(userId: string): Promise<void> {
+    try {
+      await this.redis.del(redisKeys.authProfile(userId));
+    } catch {
+      // Cache is best-effort: a Redis blip must never fail the write path.
+    }
   }
 
   /**
@@ -180,8 +200,23 @@ export class UsersService {
    * took 13s and clients timed out into false logged-out states). This is
    * exactly 2 round trips — user row + one grants join — with identical
    * output shape.
+   *
+   * Hot-path cache: this runs on EVERY authenticated request (both global
+   * guards resolve it) plus /auth/me, so the result is cached in Redis for
+   * 60s. Hits skip both Postgres round trips entirely. Staleness is bounded
+   * to 60s and role/activation writes invalidate eagerly via
+   * `clearAuthProfileCache`.
    */
   async findAuthProfile(userId: string): Promise<UserAuthProfile | null> {
+    const cacheKey = redisKeys.authProfile(userId);
+    try {
+      const hit = await this.redis.get(cacheKey);
+      if (hit) {
+        return JSON.parse(hit) as UserAuthProfile;
+      }
+    } catch {
+      // Fail open to the database on any Redis blip.
+    }
     const [user, grants] = await Promise.all([
       this.prisma.user.findUnique({ where: { id: userId } }),
       this.prisma.$queryRaw<{ role: string; action: string | null; resource: string | null }[]>(
@@ -216,7 +251,17 @@ export class UsersService {
         ),
       ),
     ];
-    return { ...toSafeUser(user), roles, permissions };
+    const profile: UserAuthProfile = { ...toSafeUser(user), roles, permissions };
+    // Never cache a just-reactivated row without persisting first (done
+    // above), and skip caching inactive accounts so bans apply immediately.
+    if (user.isActive) {
+      try {
+        await this.redis.set(cacheKey, JSON.stringify(profile), AUTH_PROFILE_TTL_SECONDS);
+      } catch {
+        // Best-effort: serving the fresh row matters, caching it doesn't.
+      }
+    }
+    return profile;
   }
 
   toSafeUser(user: User): AuthUser {

@@ -1,10 +1,17 @@
 import { Controller, Get, Res } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import type { HealthData } from '@apteez/types';
 import { Public } from '../common/decorators/public.decorator';
 import { HealthService } from './health.service';
 
-/** GET /api/v1/health — intentionally public for load balancers and uptime. */
+/**
+ * GET /api/v1/health — intentionally public for load balancers and uptime.
+ * Throttle-exempt: the web keep-warm ticker hits this every 60s per open
+ * tab and load balancers poll it — charging a Redis round trip per poll is
+ * pure overhead on the hottest endpoint.
+ */
+@SkipThrottle()
 @Controller('health')
 export class HealthController {
   constructor(private readonly health: HealthService) {}
