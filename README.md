@@ -29,6 +29,18 @@ government-exam aspirants.
 > and **measurable** — every attempt feeds ratings, streaks, weak-area analysis
 > and an AI Performance Coach, so learners always know what to practice next._
 
+## 🌐 Live
+
+|               | URL                                                                                            | What lives there                           |
+| ------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| 🖥️ **App**    | [https://apteez.vercel.app](https://apteez.vercel.app)                                         | Next.js frontend (Vercel, Singapore)       |
+| ⚙️ **API**    | [https://apteez-api.onrender.com](https://apteez-api.onrender.com)                             | NestJS API + Socket.IO (Render, Singapore) |
+| 🩺 **Health** | [https://apteez-api.onrender.com/api/v1/health](https://apteez-api.onrender.com/api/v1/health) | DB + Redis + queue status                  |
+
+> Stack is fully colocated in Singapore (`ap-southeast-1`/`sin1`): Vercel web
+> → Render API → Neon Postgres → Upstash Redis. See
+> [`docs/render-deploy.md`](docs/render-deploy.md) for the deploy runbook.
+
 </div>
 
 ---
@@ -125,15 +137,15 @@ packages/
 
 ## 🧰 Tech Arsenal
 
-| Layer       | Stack                                                                 |
-| ----------- | --------------------------------------------------------------------- |
-| 🗣️ Language | TypeScript 5.6 (strict) · Node ≥ 20 · pnpm 9                          |
-| ⚙️ Backend  | NestJS 10 · Prisma 6 · BullMQ · Socket.IO · Helmet · Throttler        |
-| 💻 Frontend | Next 14 · React 18 · TanStack Query 5 · RHF + Zod · Recharts · Sonner |
-| 🗄️ Data     | Neon Postgres + PgBouncer + pgvector · Upstash Redis                  |
-| 🔐 Auth     | Opaque Redis sessions (HTTP-only 🍪) · Google OAuth · Resend OTP      |
-| ✅ Quality  | Jest (API) · Vitest (web) · ESLint · Prettier · Turbo                 |
-| 🚢 Deploy   | Per-app Dockerfiles · smoke + `deploy:verify` scripts                 |
+| Layer       | Stack                                                                               |
+| ----------- | ----------------------------------------------------------------------------------- |
+| 🗣️ Language | TypeScript 5.6 (strict) · Node ≥ 20 · pnpm 9                                        |
+| ⚙️ Backend  | NestJS 10 · Prisma 6 · BullMQ · Socket.IO · Helmet · Throttler                      |
+| 💻 Frontend | Next 14 · React 18 · TanStack Query 5 · RHF + Zod · Recharts · Sonner               |
+| 🗄️ Data     | Neon Postgres + PgBouncer + pgvector · Upstash Redis                                |
+| 🔐 Auth     | Opaque Redis sessions (HTTP-only 🍪) · Google OAuth · Resend OTP                    |
+| ✅ Quality  | Jest (API) · Vitest (web) · ESLint · Prettier · Turbo                               |
+| 🚢 Deploy   | Vercel (web, sin1) · Render Blueprint (API, Singapore) · Neon + Upstash (Singapore) |
 
 ---
 
@@ -275,11 +287,23 @@ GET|POST|PATCH /admin/reward-rules · GET|PATCH /admin/achievements
 
 ## 🚢 Deployment
 
-- 🐳 `apps/api/Dockerfile` + `apps/web/Dockerfile` → registry → host.
+Live right now: [app](https://apteez.vercel.app) · [API](https://apteez-api.onrender.com) · [health](https://apteez-api.onrender.com/api/v1/health)
+
+- 🖥️ **Web** → Vercel, region Singapore (`sin1`), Root Directory `apps/web`
+  (custom install/build commands in `docs/render-deploy.md` §5 — the pnpm
+  monorepo needs them).
+- ⚙️ **API** → Render Blueprint (`render.yaml` at repo root): `apteez-api`
+  web service, Singapore, free tier. Build → `prisma migrate deploy` on boot
+  → `node dist/main`, health-gated at `/api/v1/health/live`. No card needed;
+  free sleeps after ~15 idle min (Starter kills the sleep).
+- 🗄️ **Data** → Neon Postgres + Upstash Redis, both Singapore
+  (single-region rule — a cross-region DB cost 10–15s/page before the move).
 - 🗄️ `pnpm db:deploy` on `DIRECT_URL` at release, then `pnpm smoke:prod`.
 - 🔒 Secrets (`DATABASE_URL`, OAuth, Resend, AI keys) come from host env —
   **never committed** (only `.env.example` files are tracked).
-- 📖 Details: [`DEPLOYMENT.md`](DEPLOYMENT.md) · [`SECURITY.md`](SECURITY.md) · `infrastructure/docker/`.
+- 📖 Details: [`docs/render-deploy.md`](docs/render-deploy.md) (step-by-step
+  runbook + troubleshooting) · [`DEPLOYMENT.md`](DEPLOYMENT.md) ·
+  [`SECURITY.md`](SECURITY.md) · `infrastructure/docker/`.
 
 ---
 
