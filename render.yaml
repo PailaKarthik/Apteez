@@ -11,9 +11,8 @@
 #
 # Rules this file follows (see DEPLOYMENT.md + apps/api/src/config/env.ts):
 # - PORT is never set here: Render injects its own and main.ts binds 0.0.0.0.
-# - Migrations run via `prisma migrate deploy` directly (NOT the pnpm
-#   db:deploy script — that wrapper reads a local .env file which does not
-#   exist on Render; here DATABASE_URL/DIRECT_URL come from the environment).
+# - Free tier rejects preDeployCommand, so migrations run inside startCommand
+#   (idempotent, advisory-lock serialized across the two services).
 # - validateEnv fails boot without: DATABASE_URL, DIRECT_URL, one Redis URL,
 #   and a real COOKIE_SECRET. S3_* are required because STORAGE_PROVIDER=s3.
 # - Neon + Upstash + these services MUST all be Singapore (single-region
@@ -34,9 +33,14 @@ services:
       pnpm --filter @apteez/validation build &&
       pnpm --filter @apteez/database build &&
       pnpm --filter @apteez/api build
-    # Runs after build, before the new code goes live. Uses DIRECT_URL.
-    preDeployCommand: pnpm --filter @apteez/database exec prisma migrate deploy
-    startCommand: pnpm --filter @apteez/api start
+    # No preDeployCommand: Render free tier rejects it. Migrations run as
+    # part of startCommand instead (idempotent; concurrent runners serialize
+    # on Postgres advisory locks). Uses DIRECT_URL. NOTE: this uses `prisma`
+    # directly, NOT the pnpm db:deploy script — that wrapper reads a local
+    # .env file which does not exist on Render.
+    startCommand: >-
+      pnpm --filter @apteez/database exec prisma migrate deploy &&
+      pnpm --filter @apteez/api start
     healthCheckPath: /api/v1/health/live
     envVars:
       - key: NODE_VERSION
@@ -109,9 +113,12 @@ services:
       pnpm --filter @apteez/validation build &&
       pnpm --filter @apteez/database build &&
       pnpm --filter @apteez/api build
-    # No preDeployCommand here: the API service already migrates once per
-    # deploy. Two runners would race the same migration history.
-    startCommand: pnpm --filter @apteez/api start:worker
+    # No preDeployCommand here either (free tier rejects it): the API service
+    # migrates on boot, and `migrate deploy` is idempotent — the worker's own
+    # run simply no-ops once the API's run lands (advisory-lock serialized).
+    startCommand: >-
+      pnpm --filter @apteez/database exec prisma migrate deploy &&
+      pnpm --filter @apteez/api start:worker
     envVars:
       - key: NODE_VERSION
         value: 20
