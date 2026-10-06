@@ -1,0 +1,146 @@
+# Render Blueprint — ApteeZ backend in Singapore.
+#
+# Setup: Render dashboard → New → Blueprint → pick this repo. Render reads
+# this file, creates the API + worker below, and prompts once for every
+# `sync: false` secret. Region + Starter plan keep the server always live
+# (free plans sleep after 15 idle minutes — that sleep IS the delay).
+#
+# Rules this file follows (see DEPLOYMENT.md + apps/api/src/config/env.ts):
+# - PORT is never set here: Render injects its own and main.ts binds 0.0.0.0.
+# - Migrations run via `prisma migrate deploy` directly (NOT the pnpm
+#   db:deploy script — that wrapper reads a local .env file which does not
+#   exist on Render; here DATABASE_URL/DIRECT_URL come from the environment).
+# - validateEnv fails boot without: DATABASE_URL, DIRECT_URL, one Redis URL,
+#   and a real COOKIE_SECRET. S3_* are required because STORAGE_PROVIDER=s3.
+# - Neon + Upstash + these services MUST all be Singapore (single-region
+#   rule). A US Redis/DB reintroduces the 10–15s latency this move kills.
+
+services:
+  - type: web
+    name: apteez-api
+    region: singapore
+    plan: starter
+    runtime: node
+    buildCommand: >-
+      corepack enable &&
+      pnpm install --frozen-lockfile &&
+      pnpm --filter @apteez/database db:generate &&
+      pnpm --filter @apteez/types build &&
+      pnpm --filter @apteez/config build &&
+      pnpm --filter @apteez/validation build &&
+      pnpm --filter @apteez/database build &&
+      pnpm --filter @apteez/api build
+    # Runs after build, before the new code goes live. Uses DIRECT_URL.
+    preDeployCommand: pnpm --filter @apteez/database exec prisma migrate deploy
+    startCommand: pnpm --filter @apteez/api start
+    healthCheckPath: /api/v1/health/live
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: TRUST_PROXY
+        value: 1
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: UPSTASH_REDIS_URL
+        sync: false
+      - key: COOKIE_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: API_URL
+        sync: false
+      - key: STORAGE_PROVIDER
+        value: s3
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        value: ap-southeast-1
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: openai/gpt-oss-120b
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: EMBEDDING_API_KEY
+        sync: false
+      - key: AI_DAILY_LIMIT
+        value: 50
+
+  - type: worker
+    name: apteez-worker
+    region: singapore
+    plan: starter
+    runtime: node
+    buildCommand: >-
+      corepack enable &&
+      pnpm install --frozen-lockfile &&
+      pnpm --filter @apteez/database db:generate &&
+      pnpm --filter @apteez/types build &&
+      pnpm --filter @apteez/config build &&
+      pnpm --filter @apteez/validation build &&
+      pnpm --filter @apteez/database build &&
+      pnpm --filter @apteez/api build
+    # No preDeployCommand here: the API service already migrates once per
+    # deploy. Two runners would race the same migration history.
+    startCommand: pnpm --filter @apteez/api start:worker
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: UPSTASH_REDIS_URL
+        sync: false
+      - key: COOKIE_SECRET
+        sync: false
+      - key: STORAGE_PROVIDER
+        value: s3
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        value: ap-southeast-1
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: openai/gpt-oss-120b
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: EMBEDDING_API_KEY
+        sync: false
+      - key: AI_DAILY_LIMIT
+        value: 50

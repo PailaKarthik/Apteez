@@ -146,6 +146,14 @@ deploy`, (3) verify `/health/ready` + smoke, (4) enable dependent code.
 
 ## 7. PostgreSQL (Neon — the only permanent database)
 
+Single-region rule: Neon, Upstash, S3 and the EC2 host MUST live in the same
+AWS region as the users (ap-southeast-1 Singapore for Indian users — the
+nearest region Neon offers; Sydney is ~2x farther from India). Measured
+2026-10-05: API in India → Neon us-east-2 (Ohio) pays ~800ms TCP connect and
+~1.6s per warm query, with parallel queries serializing through the pooler —
+a 5-query page costs ~8s before any application work. Same-region Mumbai
+brings warm queries to single-digit milliseconds. Region is a bigger lever
+than any code optimization; never "fix" cross-region latency with caching.
 Neon Postgres with pgvector (supported natively; the RAG migration enables
 `vector` idempotently — verify with
 `SELECT * FROM pg_extension WHERE extname = 'vector';`). Automated backups +
@@ -186,7 +194,9 @@ generatedAt per row. States: `PENDING → PROCESSING → READY | FAILED`.
 ## 9. Redis (Upstash) + workers + storage + IAM
 
 - Redis: Upstash with TLS + AUTH token, `noeviction` policy (BullMQ
-  correctness), Upstash memory/evictions monitoring. Ephemeral only —
+  correctness), Upstash memory/evictions monitoring. MUST be provisioned in
+  the same region as Neon/EC2 (single-region rule, §7) — a cross-region
+  Redis adds ~100ms to every throttler check and session lookup. Ephemeral only —
   loss means re-login, cold caches, rebuilt queues; **Neon stays
   authoritative** (recovery table in §10 runbook).
 - Workers: ONE `worker` process on EC2 (`node dist/worker`, no ports) —
