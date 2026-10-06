@@ -11,29 +11,35 @@ Browser (India)
   → Upstash Redis, Singapore ......... sessions / throttle / queues / caches
 ```
 
-Total baseline cost: ~$14/mo (2 × Render Starter $7). Everything else free tier.
+Total baseline cost: $0 on the free plan (card-free), ~$14/mo on Starter
+(2 × $7) for sleep-free production. Everything else free tier.
 
 ## 0. About Render sleep — read this first
 
-There is **no code bypass** for free-tier sleep, and no setting in this
-repo pretends otherwise. How it actually works:
+`render.yaml` ships `plan: free` on both services, so **no credit card is
+asked** at any step. The honest trade-offs of free:
 
-- **Free web service:** Render spins it down after ~15 idle minutes. The
-  first request after that waits 30–60s for a cold boot. No header, no
-  ping interval, no keep-alive trick inside your code can prevent it —
-  the proxy stops routing to a sleeping container, period.
-- **This blueprint uses `plan: starter` on both services.** Starter never
-  sleeps. That is the bypass, and it is the only honest one.
-- **If you insist on free tier anyway:** the damage is limited to the
-  first visitor after idle. Two mitigations, both partial:
-  1. The web app already pings `GET /health` every 60s per open tab
-     (`useKeepWarm`), so active usage never sleeps.
-  2. Add a free external pinger (UptimeRobot / cron-job.org) hitting
-     `https://<api>/api/v1/health/live` every 10 minutes. This keeps the
-     container warm most of the day, but Render still counts 750 free
-     hours/month and may sleep it regardless — expect occasional cold
-     boots. For a live game with a countdown clock, those boots ruin
-     matches. Use Starter.
+- The web service sleeps after ~15 idle minutes; the first request after
+  that waits 30–60s for a cold boot. For testing that is fine. For live
+  countdown matches it is not — a boot mid-match ruins the game.
+- Free accounts share **750 instance-hours/month**. API + worker running
+  24/7 need ~1,460h, so round-the-clock free operation runs dry mid-month
+  and services pause until the next cycle. Sleeping when idle is what keeps
+  light/test usage inside the budget.
+- No code, header, or ping interval inside your app can prevent sleep —
+  the proxy stops routing to a stopped container, period.
+
+Staying warm on free (partial, but free):
+
+1. The web app already pings `GET /health` every 60s per open tab
+   (`useKeepWarm`) — active usage never sleeps.
+2. Add a free external pinger (UptimeRobot / cron-job.org, no card):
+   monitor `https://<api>/api/v1/health/live` every 10 minutes. Note this
+   keeps the container burning hours — it trades sleep for budget.
+
+When real users arrive: flip both services to `plan: starter` in
+`render.yaml` (never sleeps, outside the hour budget), add the card once,
+redeploy. One-line change, everything else identical.
 
 ## 1. Prerequisites
 

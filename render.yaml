@@ -2,8 +2,12 @@
 #
 # Setup: Render dashboard → New → Blueprint → pick this repo. Render reads
 # this file, creates the API + worker below, and prompts once for every
-# `sync: false` secret. Region + Starter plan keep the server always live
-# (free plans sleep after 15 idle minutes — that sleep IS the delay).
+# `sync: false` secret. No credit card is needed on the free plan.
+#
+# Plan note (read before changing): `free` sleeps after ~15 idle minutes and
+# shares 750 instance-hours/month across the account — fine for testing, not
+# for live matches (a sleeping container cold-boots 30-60s mid-countdown).
+# For production flip both services to `plan: starter` (never sleeps).
 #
 # Rules this file follows (see DEPLOYMENT.md + apps/api/src/config/env.ts):
 # - PORT is never set here: Render injects its own and main.ts binds 0.0.0.0.
@@ -19,7 +23,7 @@ services:
   - type: web
     name: apteez-api
     region: singapore
-    plan: starter
+    plan: free
     runtime: node
     buildCommand: >-
       corepack enable &&
@@ -94,7 +98,7 @@ services:
   - type: worker
     name: apteez-worker
     region: singapore
-    plan: starter
+    plan: free
     runtime: node
     buildCommand: >-
       corepack enable &&
