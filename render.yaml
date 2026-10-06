@@ -62,7 +62,10 @@ services:
       - key: S3_ENDPOINT
         sync: false
       - key: S3_REGION
-        value: ap-southeast-1
+        # Must match the bucket's actual region (signing breaks otherwise).
+        # Asset bucket currently lives in us-east-2 — move it to Singapore
+        # as a follow-up, then flip this value with it.
+        value: us-east-2
       - key: S3_BUCKET
         sync: false
       - key: S3_ACCESS_KEY_ID
@@ -125,7 +128,10 @@ services:
       - key: S3_ENDPOINT
         sync: false
       - key: S3_REGION
-        value: ap-southeast-1
+        # Must match the bucket's actual region (signing breaks otherwise).
+        # Asset bucket currently lives in us-east-2 — move it to Singapore
+        # as a follow-up, then flip this value with it.
+        value: us-east-2
       - key: S3_BUCKET
         sync: false
       - key: S3_ACCESS_KEY_ID
