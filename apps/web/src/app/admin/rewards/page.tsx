@@ -423,13 +423,25 @@ export default function AdminRewardsPage(): React.JSX.Element {
   return (
     <div className="space-y-4">
       <Tabs defaultValue="catalog">
-        <TabsList>
-          <TabsTrigger value="catalog">Catalog</TabsTrigger>
-          <TabsTrigger value="rules">Earning rules</TabsTrigger>
-          <TabsTrigger value="achievements">Achievements</TabsTrigger>
-          <TabsTrigger value="redemptions">Redemptions</TabsTrigger>
-          <TabsTrigger value="suspicious">Suspicious</TabsTrigger>
-          <TabsTrigger value="adjust">Adjust points</TabsTrigger>
+        <TabsList className="max-w-full justify-start overflow-x-auto">
+          <TabsTrigger value="catalog" className="shrink-0 whitespace-nowrap">
+            Catalog
+          </TabsTrigger>
+          <TabsTrigger value="rules" className="shrink-0 whitespace-nowrap">
+            Earning rules
+          </TabsTrigger>
+          <TabsTrigger value="achievements" className="shrink-0 whitespace-nowrap">
+            Achievements
+          </TabsTrigger>
+          <TabsTrigger value="redemptions" className="shrink-0 whitespace-nowrap">
+            Redemptions
+          </TabsTrigger>
+          <TabsTrigger value="suspicious" className="shrink-0 whitespace-nowrap">
+            Suspicious
+          </TabsTrigger>
+          <TabsTrigger value="adjust" className="shrink-0 whitespace-nowrap">
+            Adjust points
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="catalog" className="space-y-3 pt-2">

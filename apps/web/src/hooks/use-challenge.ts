@@ -54,8 +54,8 @@ export interface UseChallengeResult extends ChallengeLiveState {
   reset: () => void;
 }
 
-/** After this long without an ack, tell the user the server is slow (free-tier wake-ups). */
-const SLOW_ANSWER_MS = 6000;
+/** After this long without an ack, tell the user the server is slow. */
+const SLOW_ANSWER_MS = 3000;
 
 function isAck(value: unknown): value is ChallengeAnswerAckDto {
   return typeof value === 'object' && value !== null && 'accepted' in value;

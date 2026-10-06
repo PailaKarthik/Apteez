@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Badge,
@@ -136,7 +136,8 @@ export default function AdminContestsPage(): React.JSX.Element {
             </thead>
             <tbody>
               {data.items.map((row) => (
-                <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/40">
+                <Fragment key={row.id}>
+                  <tr className="border-b border-border last:border-0 hover:bg-muted/40">
                   <td className="max-w-xs px-3 py-2">
                     <span className="block truncate font-medium">{row.title}</span>
                     <span className="block font-metric text-xs text-muted-foreground">
@@ -224,9 +225,19 @@ export default function AdminContestsPage(): React.JSX.Element {
                         </Dialog>
                       ) : null}
                     </div>
-                    {inspecting === row.id ? <Participants id={row.id} /> : null}
                   </td>
-                </tr>
+                  </tr>
+                  {/* Participants render as their own full-width row: nested
+                      inside the Actions cell they stretched the scroll
+                      container and pushed Actions off-screen on mobile. */}
+                  {inspecting === row.id ? (
+                    <tr className="border-b border-border bg-muted/20 last:border-0">
+                      <td colSpan={5} className="px-3 py-2">
+                        <Participants id={row.id} />
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
               ))}
             </tbody>
           </table>

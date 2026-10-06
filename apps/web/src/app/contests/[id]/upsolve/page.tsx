@@ -89,10 +89,10 @@ export default function ContestUpsolvePage(): React.JSX.Element {
             <Card key={question.questionId}>
               <CardContent className="space-y-3 p-6">
                 <div className="flex flex-wrap items-center gap-2">
-                  <CardTitle className="text-card-title">
+                  <CardTitle className="min-w-0 flex-1 break-words text-card-title">
                     Q{question.position + 1} · {question.title}
                   </CardTitle>
-                  <Badge variant={CORRECTNESS_TONE[question.correctness]}>
+                  <Badge variant={CORRECTNESS_TONE[question.correctness]} className="shrink-0">
                     {question.correctness}
                   </Badge>
                 </div>
@@ -105,7 +105,7 @@ export default function ContestUpsolvePage(): React.JSX.Element {
                       <div
                         key={option.id}
                         className={cn(
-                          'rounded-lg border px-1 py-0.5',
+                          'rounded-lg border p-1',
                           isCorrect
                             ? 'border-success/60 bg-success/10'
                             : isSelected

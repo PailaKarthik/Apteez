@@ -21,9 +21,10 @@ import { FolderProblems } from './folder-problems';
 function ExamPatternSkeletons(): React.JSX.Element {
   return (
     <div
-      className="flex gap-2.5 overflow-hidden"
+      className="flex snap-x gap-2.5 overflow-x-auto pb-1"
       aria-busy="true"
       aria-label="Loading exam patterns"
+      aria-hidden
     >
       {Array.from({ length: 5 }, (_, index) => (
         <Card key={index} className="w-48 shrink-0">

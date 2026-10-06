@@ -90,7 +90,10 @@ export function LearningTopicView({ slug }: { slug: string }): React.JSX.Element
   const current = topic.data;
   return (
     <div className="space-y-8">
-      <nav aria-label="Breadcrumb" className="text-sm text-muted-foreground">
+      <nav
+        aria-label="Breadcrumb"
+        className="overflow-x-auto whitespace-nowrap text-sm text-muted-foreground"
+      >
         <Link href="/explore" className="transition-colors hover:text-foreground">
           Explore
         </Link>

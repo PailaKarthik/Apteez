@@ -105,6 +105,7 @@ export function ContestResultCard({
             variant={
               item.phase === 'live' ? 'success' : item.phase === 'past' ? 'secondary' : 'warning'
             }
+            className="max-w-[110px] shrink-0 truncate"
           >
             {item.status}
           </Badge>
@@ -140,6 +141,7 @@ export function EventResultCard({
             variant={
               item.phase === 'live' ? 'success' : item.phase === 'past' ? 'secondary' : 'warning'
             }
+            className="max-w-[110px] shrink-0 truncate"
           >
             {item.status.replace(/_/g, ' ')}
           </Badge>

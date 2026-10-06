@@ -122,18 +122,21 @@ function ProblemPicker({
               excludeIds.has(problem.id) ? null : (
                 <li
                   key={problem.id}
-                  className="flex items-center gap-3 rounded-xl border border-border bg-elevated p-3"
+                  className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-elevated p-3"
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 basis-40">
                     <p className="truncate text-sm font-medium text-foreground">{problem.title}</p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="truncate text-xs text-muted-foreground">
                       {problem.category.name} · rating{' '}
                       <span className="font-metric">{problem.rating}</span>
                     </p>
                   </div>
-                  <Badge variant={DIFFICULTY_TONE[problem.difficulty]}>{problem.difficulty}</Badge>
+                  <Badge variant={DIFFICULTY_TONE[problem.difficulty]} className="shrink-0">
+                    {problem.difficulty}
+                  </Badge>
                   <Button
                     size="sm"
+                    className="min-h-11 shrink-0"
                     disabled={add.isPending}
                     onClick={() => void attach(problem.id)}
                   >

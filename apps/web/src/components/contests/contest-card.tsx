@@ -65,8 +65,12 @@ export function ContestCard({ contest, className }: ContestCardProps): React.JSX
       >
         <CardContent className="flex h-full flex-col gap-3 p-5">
           <div className="flex items-start justify-between gap-2">
-            <CardTitle className="text-card-title">{contest.name}</CardTitle>
-            <Badge variant={phase.variant}>{phase.label}</Badge>
+            <CardTitle className="min-w-0 flex-1 break-words text-card-title">
+              {contest.name}
+            </CardTitle>
+            <Badge variant={phase.variant} className="shrink-0">
+              {phase.label}
+            </Badge>
           </div>
           {contest.description ? (
             <CardDescription className="line-clamp-2">{contest.description}</CardDescription>

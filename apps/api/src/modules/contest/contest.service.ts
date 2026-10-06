@@ -654,11 +654,17 @@ export class ContestService {
       where: { id: participant.id },
       data: { lastSeenAt: now },
     });
-    const questions = await this.loadQuestions(contestId);
-    const answers = await this.prisma.contestAnswer.findMany({
-      where: { participantId: participant.id },
-      select: { contestQuestionId: true, selectedOptionId: true, markedForReview: true },
-    });
+    // The heartbeat write, the question list and the answer list are
+    // independent — one pooler round trip instead of three. (Measured: each
+    // serialized round trip costs ~1.5s from far regions, and session() runs
+    // on every answer, every navigation and every 5s poll.)
+    const [questions, answers] = await Promise.all([
+      this.loadQuestions(contestId),
+      this.prisma.contestAnswer.findMany({
+        where: { participantId: participant.id },
+        select: { contestQuestionId: true, selectedOptionId: true, markedForReview: true },
+      }),
+    ]);
     const byQuestion = new Map(answers.map((a) => [a.contestQuestionId, a]));
     const currentPosition = Math.min(
       Math.max(0, participant.currentPosition),
@@ -707,11 +713,13 @@ export class ContestService {
               1000,
           ),
         );
-    const refreshed = await this.findParticipant(contestId, userId);
+    // Note: no re-read of the participant here — the only write since the
+    // load touched lastSeenAt, never status. (The finalize path above
+    // recurses with a fresh row.) Saves one pooler round trip per session call.
     return {
       contestId,
       status: contest.status,
-      participantStatus: refreshed?.status ?? participant.status,
+      participantStatus: participant.status,
       serverTime: now.toISOString(),
       startsAt: contest.startsAt.toISOString(),
       endsAt: contest.endsAt.toISOString(),
@@ -735,57 +743,63 @@ export class ContestService {
     if (!option) {
       throw new ContestQuestionError('That option does not belong to this question.');
     }
-    await this.prisma.contestAnswer.upsert({
-      where: {
-        contestQuestionId_participantId: {
-          contestQuestionId: guard.question.id,
-          participantId: guard.participant.id,
+    // The answer write and the cursor write are independent — commit them
+    // together instead of serializing two pooler round trips per click.
+    await Promise.all([
+      this.prisma.contestAnswer.upsert({
+        where: {
+          contestQuestionId_participantId: {
+            contestQuestionId: guard.question.id,
+            participantId: guard.participant.id,
+          },
         },
-      },
-      update: { selectedOptionId: input.selectedOptionId, answeredAt: new Date() },
-      create: {
-        contestId,
-        participantId: guard.participant.id,
-        contestQuestionId: guard.question.id,
-        userId,
-        selectedOptionId: input.selectedOptionId,
-        answeredAt: new Date(),
-      },
-    });
-    if (input.currentPosition !== undefined) {
-      await this.prisma.contestParticipant.update({
-        where: { id: guard.participant.id },
-        data: { currentPosition: input.currentPosition, lastSeenAt: new Date() },
-      });
-    }
+        update: { selectedOptionId: input.selectedOptionId, answeredAt: new Date() },
+        create: {
+          contestId,
+          participantId: guard.participant.id,
+          contestQuestionId: guard.question.id,
+          userId,
+          selectedOptionId: input.selectedOptionId,
+          answeredAt: new Date(),
+        },
+      }),
+      input.currentPosition !== undefined
+        ? this.prisma.contestParticipant.update({
+            where: { id: guard.participant.id },
+            data: { currentPosition: input.currentPosition, lastSeenAt: new Date() },
+          })
+        : Promise.resolve(),
+    ]);
     return this.answerCounts(guard.participant.id);
   }
 
   async review(contestId: string, questionId: string, userId: string, input: ContestReviewInput) {
     const guard = await this.requireAnswerable(contestId, userId, questionId);
-    await this.prisma.contestAnswer.upsert({
-      where: {
-        contestQuestionId_participantId: {
-          contestQuestionId: guard.question.id,
-          participantId: guard.participant.id,
+    await Promise.all([
+      this.prisma.contestAnswer.upsert({
+        where: {
+          contestQuestionId_participantId: {
+            contestQuestionId: guard.question.id,
+            participantId: guard.participant.id,
+          },
         },
-      },
-      update: { markedForReview: input.markedForReview },
-      create: {
-        contestId,
-        participantId: guard.participant.id,
-        contestQuestionId: guard.question.id,
-        userId,
-        selectedOptionId: null,
-        markedForReview: input.markedForReview,
-      },
-    });
-    if (input.currentPosition !== undefined) {
-      await this.prisma.contestParticipant.update({
-        where: { id: guard.participant.id },
-        data: { currentPosition: input.currentPosition, lastSeenAt: new Date() },
-      });
-    }
+        update: { markedForReview: input.markedForReview },
+        create: {
+          contestId,
+          participantId: guard.participant.id,
+          contestQuestionId: guard.question.id,
+          userId,
+          selectedOptionId: null,
+          markedForReview: input.markedForReview,
+        },
+      }),
+      input.currentPosition !== undefined
+        ? this.prisma.contestParticipant.update({
+            where: { id: guard.participant.id },
+            data: { currentPosition: input.currentPosition, lastSeenAt: new Date() },
+          })
+        : Promise.resolve(),
+    ]);
     return this.answerCounts(guard.participant.id);
   }
 
@@ -1597,9 +1611,24 @@ export class ContestService {
   }
 
   private async requireAnswerable(contestId: string, userId: string, questionId: string) {
-    const contest = await this.syncStatus(contestId);
+    // The three guard reads are independent — one pooler round trip instead
+    // of three. Every answer click and every navigation pays this guard.
+    const [contest, participant, question] = await Promise.all([
+      this.syncStatus(contestId),
+      this.requireParticipant(contestId, userId),
+      this.prisma.contestQuestion.findFirst({
+        where: { id: questionId, contestId },
+        include: {
+          problem: {
+            include: {
+              assets: { orderBy: { position: 'asc' } },
+              options: { orderBy: { position: 'asc' } },
+            },
+          },
+        },
+      }) as Promise<QuestionRow | null>,
+    ]);
     this.assertParticipable(contest);
-    const participant = await this.requireParticipant(contestId, userId);
     if (participant.status === 'SUBMITTED' || participant.status === 'AUTO_SUBMITTED') {
       throw new ContestStateError('This contest was already submitted.');
     }
@@ -1611,17 +1640,6 @@ export class ContestService {
       await this.finalizeParticipant(contestId, userId, true);
       throw new ContestExpiredError();
     }
-    const question = (await this.prisma.contestQuestion.findFirst({
-      where: { id: questionId, contestId },
-      include: {
-        problem: {
-          include: {
-            assets: { orderBy: { position: 'asc' } },
-            options: { orderBy: { position: 'asc' } },
-          },
-        },
-      },
-    })) as QuestionRow | null;
     if (!question) {
       throw new ContestQuestionError();
     }

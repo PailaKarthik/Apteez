@@ -173,6 +173,34 @@ export function useAnswerContestQuestion(contestId: string | undefined) {
           body: { selectedOptionId: body.selectedOptionId, currentPosition: body.currentPosition },
         },
       ),
+    // Instant feedback: paint the selection locally the moment the user
+    // taps. The server write + session refetch below only confirm it, so an
+    // answer feels instant even when the round trip takes a second. The
+    // navigator/counts reconcile from the server response right after.
+    onMutate: (body) => {
+      void queryClient.setQueryData<ContestSessionDto>(
+        ['contests', 'session', contestId],
+        (old) => {
+          if (!old || old.current.questionId !== body.questionId) {
+            return old;
+          }
+          if (old.current.selectedOptionId) {
+            return { ...old, current: { ...old.current, selectedOptionId: body.selectedOptionId } };
+          }
+          return {
+            ...old,
+            current: { ...old.current, selectedOptionId: body.selectedOptionId },
+            answeredCount: old.answeredCount + 1,
+            unansweredCount: Math.max(0, old.unansweredCount - 1),
+          };
+        },
+      );
+    },
+    // Roll back to the server truth on any failure (the error toast fires
+    // at the call site).
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ['contests', 'session', contestId] });
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['contests', 'session', contestId] });
     },
@@ -208,6 +236,10 @@ export function useSubmitContest(contestId: string | undefined) {
     onSuccess: () => {
       invalidateContest(queryClient, contestId);
       invalidateActivityQueries(queryClient);
+      // A submission eventually produces rating history (processed at
+      // close): refresh the profile graph so the new curve appears without
+      // a manual reload.
+      void queryClient.invalidateQueries({ queryKey: ['profile', 'rating-history'] });
     },
   });
 }
@@ -319,6 +351,9 @@ export function useRetryContestRatings(contestId: string | undefined) {
       invalidateManage(queryClient, contestId);
       void queryClient.invalidateQueries({ queryKey: ['contests', 'result', contestId] });
       void queryClient.invalidateQueries({ queryKey: ['contests', 'leaderboard', contestId] });
+      // A successful retry writes contestRatingHistory rows: refresh the
+      // profile graph so the curve appears without a manual reload.
+      void queryClient.invalidateQueries({ queryKey: ['profile', 'rating-history'] });
       return data;
     },
   });

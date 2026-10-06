@@ -207,19 +207,19 @@ export default function DiscussionsPage(): React.JSX.Element {
                     {thread.isLocked ? <Lock className="h-4 w-4 text-muted-foreground" /> : null}
                     <span className="truncate">{thread.title}</span>
                   </Link>
-                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                  <p className="mt-1 line-clamp-2 break-words text-sm text-muted-foreground">
                     {thread.excerpt}
                   </p>
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                    <span>{thread.author.displayName}</span>
-                    <span className="inline-flex items-center gap-1">
+                    <span className="min-w-0 truncate">{thread.author.displayName}</span>
+                    <span className="inline-flex shrink-0 items-center gap-1">
                       <MessageSquare className="h-3 w-3" /> {thread.replyCount}
                     </span>
-                    <span className="inline-flex items-center gap-1">
+                    <span className="inline-flex shrink-0 items-center gap-1">
                       <ThumbsUp className="h-3 w-3" /> {thread.reactionCount}
                     </span>
                     {thread.tags.map((tag) => (
-                      <span key={tag} className="rounded bg-muted px-2 py-0.5">
+                      <span key={tag} className="max-w-full break-all rounded bg-muted px-2 py-0.5">
                         #{tag}
                       </span>
                     ))}

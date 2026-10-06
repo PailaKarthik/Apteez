@@ -211,16 +211,19 @@ export default function ContestDetailPage(): React.JSX.Element {
                 ) : (
                   <>
                     <div className="overflow-x-auto rounded-xl border border-border">
-                      <table className="w-full min-w-[560px] text-left text-sm">
+                      <table className="w-full min-w-[420px] text-left text-sm sm:min-w-[560px]">
                         <thead>
                           <tr className="border-b border-border text-xs text-muted-foreground">
                             <th className="px-3 py-2 font-medium">Rank</th>
                             <th className="px-3 py-2 font-medium">Contestant</th>
                             <th className="px-3 py-2 font-medium">Solved</th>
                             <th className="px-3 py-2 font-medium">Score</th>
-                            <th className="px-3 py-2 font-medium">Wrong</th>
-                            <th className="px-3 py-2 font-medium">Time</th>
-                            <th className="px-3 py-2 font-medium">Rating</th>
+                            {/* Secondary columns collapse on phones; the
+                                table still scrolls, but the core standings
+                                fit without scrolling on most screens. */}
+                            <th className="hidden px-3 py-2 font-medium sm:table-cell">Wrong</th>
+                            <th className="hidden px-3 py-2 font-medium sm:table-cell">Time</th>
+                            <th className="hidden px-3 py-2 font-medium md:table-cell">Rating</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -246,10 +249,14 @@ export default function ContestDetailPage(): React.JSX.Element {
                               </td>
                               <td className="px-3 py-2 font-metric">{row.solvedCount}</td>
                               <td className="px-3 py-2 font-metric">{row.score}</td>
-                              <td className="px-3 py-2 font-metric">{row.wrongCount}</td>
-                              <td className="px-3 py-2 font-metric">{row.completionSeconds}s</td>
+                              <td className="hidden px-3 py-2 font-metric sm:table-cell">
+                                {row.wrongCount}
+                              </td>
+                              <td className="hidden px-3 py-2 font-metric sm:table-cell">
+                                {row.completionSeconds}s
+                              </td>
                               <td
-                                className={`px-3 py-2 font-metric ${
+                                className={`hidden px-3 py-2 font-metric md:table-cell ${
                                   row.ratingChange === null
                                     ? 'text-muted-foreground'
                                     : row.ratingChange >= 0

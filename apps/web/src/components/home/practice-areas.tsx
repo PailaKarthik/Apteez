@@ -11,9 +11,10 @@ import { FolderProblems } from './folder-problems';
 function PracticeAreaSkeletons(): React.JSX.Element {
   return (
     <div
-      className="flex gap-2.5 overflow-hidden"
+      className="flex snap-x gap-2.5 overflow-x-auto pb-1"
       aria-busy="true"
       aria-label="Loading practice areas"
+      aria-hidden
     >
       {Array.from({ length: 5 }, (_, index) => (
         <Card key={index} className="w-44 shrink-0">

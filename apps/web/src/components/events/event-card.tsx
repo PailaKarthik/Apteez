@@ -67,8 +67,12 @@ export function EventCard({ event, className }: EventCardProps): React.JSX.Eleme
       >
         <CardContent className="flex h-full flex-col gap-3 p-5">
           <div className="flex items-start justify-between gap-2">
-            <CardTitle className="text-card-title">{event.title}</CardTitle>
-            <Badge variant={phase.variant}>{phase.label}</Badge>
+            <CardTitle className="min-w-0 flex-1 break-words text-card-title">
+              {event.title}
+            </CardTitle>
+            <Badge variant={phase.variant} className="shrink-0">
+              {phase.label}
+            </Badge>
           </div>
           {event.description ? (
             <CardDescription className="line-clamp-2">{event.description}</CardDescription>

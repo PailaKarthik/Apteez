@@ -60,7 +60,8 @@ export function EmailVerificationBanner(): React.JSX.Element | null {
           <DialogHeader>
             <DialogTitle>Verify your email</DialogTitle>
             <DialogDescription>
-              We sent a 6-digit code to {user.email}. It expires in 10 minutes.
+              We sent a 6-digit code to <span className="break-all">{user.email}</span>. It
+              expires in 10 minutes.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -81,6 +82,7 @@ export function EmailVerificationBanner(): React.JSX.Element | null {
             <div className="flex gap-2">
               <Input
                 value={code}
+                className="min-w-0 flex-1"
                 onChange={(event) =>
                   setCode(event.target.value.replace(/\D/g, '').slice(0, 6))
                 }

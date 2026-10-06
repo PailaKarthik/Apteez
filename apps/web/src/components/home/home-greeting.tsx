@@ -35,8 +35,8 @@ export function HomeGreeting(): React.JSX.Element {
     : `${dateLine} · sign in to track streaks`;
 
   return (
-    <section aria-label="Welcome" className="space-y-1">
-      <h1 className="text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">
+    <section aria-label="Welcome" className="min-w-0 space-y-1">
+      <h1 className="break-words text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">
         {greetingFor(now)}
         {name}
       </h1>

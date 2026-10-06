@@ -53,7 +53,13 @@ export function MobileTabBar({ className }: { className?: string }): React.JSX.E
                     )}
                   />
                 </span>
-                <span className="truncate">{item.label}</span>
+                <span className="truncate">
+                  {/* Icon-only below 400px: seven labels never fit a 360px
+                      viewport, and truncated stubs ("Lead…", "Disc…") help
+                      nobody. Icons + active dot carry the meaning. */}
+                  <span className="hidden min-[400px]:inline">{item.label}</span>
+                  <span className="sr-only min-[400px]:hidden">{item.label}</span>
+                </span>
               </Link>
             </li>
           );

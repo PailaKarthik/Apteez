@@ -31,7 +31,10 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-2xl border bg-popover p-6 shadow-lg duration-base data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+        // Viewport-capped by default: at 360px the dialog never touches the
+        // screen edges and tall content scrolls inside instead of blowing
+        // out the page. Callers can still widen via className (max-w merge).
+        'fixed left-1/2 top-1/2 z-50 grid max-h-[90dvh] w-full max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-2xl border bg-popover p-6 shadow-lg duration-base data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg',
         className,
       )}
       {...props}

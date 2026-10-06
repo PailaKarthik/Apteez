@@ -70,7 +70,7 @@ function RankBadge({ rank }: { rank: number }): React.JSX.Element {
 function ChallengeRow({ entry }: { entry: RatingLeaderboardEntryDto }): React.JSX.Element {
   const initial = entry.displayName.trim().charAt(0).toUpperCase() || 'A';
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5">
+    <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2.5 sm:gap-3">
       <RankBadge rank={entry.rank} />
       <Avatar className="size-9 border border-border">
         <AvatarFallback className="text-xs font-semibold">{initial}</AvatarFallback>
@@ -89,8 +89,12 @@ function ChallengeRow({ entry }: { entry: RatingLeaderboardEntryDto }): React.JS
           {entry.matches} match{entry.matches === 1 ? '' : 'es'} · {entry.winRate}% win rate
         </p>
       </div>
-      <Badge variant={TIER_TONE[entry.tier]}>{RATING_TIER_LABELS[entry.tier]}</Badge>
-      <span className="font-metric w-14 text-right text-lg font-bold text-foreground">
+      {/* Tier badge hides on phones: rank + avatar + rating already take
+          ~200px, leaving the name unreadable. */}
+      <Badge variant={TIER_TONE[entry.tier]} className="hidden shrink-0 sm:inline-flex">
+        {RATING_TIER_LABELS[entry.tier]}
+      </Badge>
+      <span className="font-metric w-12 shrink-0 text-right text-base font-bold text-foreground sm:w-14 sm:text-lg">
         {entry.rating}
       </span>
     </div>
@@ -100,7 +104,7 @@ function ChallengeRow({ entry }: { entry: RatingLeaderboardEntryDto }): React.JS
 function ContestRow({ entry }: { entry: ContestRatingLeaderboardEntryDto }): React.JSX.Element {
   const initial = entry.displayName.trim().charAt(0).toUpperCase() || 'A';
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5">
+    <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2.5 sm:gap-3">
       <RankBadge rank={entry.rank} />
       <Avatar className="size-9 border border-border">
         <AvatarFallback className="text-xs font-semibold">{initial}</AvatarFallback>
@@ -120,8 +124,10 @@ function ContestRow({ entry }: { entry: ContestRatingLeaderboardEntryDto }): Rea
           {entry.bestRank ? ` · best #${entry.bestRank}` : ''}
         </p>
       </div>
-      <Badge variant={TIER_TONE[entry.tier]}>{RATING_TIER_LABELS[entry.tier]}</Badge>
-      <span className="font-metric w-14 text-right text-lg font-bold text-foreground">
+      <Badge variant={TIER_TONE[entry.tier]} className="hidden shrink-0 sm:inline-flex">
+        {RATING_TIER_LABELS[entry.tier]}
+      </Badge>
+      <span className="font-metric w-12 shrink-0 text-right text-base font-bold text-foreground sm:w-14 sm:text-lg">
         {entry.rating}
       </span>
     </div>

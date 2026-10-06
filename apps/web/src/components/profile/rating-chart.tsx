@@ -30,6 +30,7 @@ const Chart = dynamic(
             />
             <recharts.Tooltip
               contentStyle={{ borderRadius: 12, fontSize: 12 }}
+              wrapperStyle={{ maxWidth: '90vw' }}
               labelFormatter={(label: string) => label}
             />
             <recharts.Area
@@ -40,6 +41,7 @@ const Chart = dynamic(
               stroke="hsl(var(--primary))"
               fill="hsl(var(--primary) / 0.18)"
               strokeWidth={2}
+              dot={{ r: 3 }}
             />
             <recharts.Area
               type="monotone"
@@ -49,6 +51,7 @@ const Chart = dynamic(
               stroke="hsl(var(--success))"
               fill="hsl(var(--success) / 0.15)"
               strokeWidth={2}
+              dot={{ r: 3 }}
             />
           </recharts.AreaChart>
         </recharts.ResponsiveContainer>
@@ -61,7 +64,9 @@ const Chart = dynamic(
 /**
  * Dual rating curves from unified engine history: challenge (primary) and
  * contest (green). Each series forward-fills so one engine going quiet never
- * drags the other's line. Empty-safe.
+ * drags the other's line. Empty-safe. A single rated game already renders
+ * (dots mark lone points) — previously the first-ever rating showed the
+ * empty placeholder, which read as "ratings are broken".
  */
 export function RatingChart({
   points,
@@ -131,7 +136,7 @@ export function RatingChart({
             ) : null}
           </div>
         </div>
-        {data.length < 2 ? (
+        {data.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             Play rated challenges or contests — your rating curve appears here.
           </p>

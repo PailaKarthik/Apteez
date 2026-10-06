@@ -44,9 +44,15 @@ export function FolderProblems({
             </p>
             <p className="truncate text-base font-bold text-foreground">{title}</p>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close folder">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClose}
+            aria-label="Close folder"
+            className="shrink-0"
+          >
             <X aria-hidden />
-            Close
+            <span className="hidden sm:inline">Close</span>
           </Button>
         </div>
         <ProblemList

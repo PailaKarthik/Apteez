@@ -20,7 +20,9 @@ export function Breadcrumb(): React.JSX.Element {
   return (
     <p
       className={cn(
-        'truncate text-sm font-semibold text-foreground',
+        // min-w-0 lets the flex parent shrink this instead of shoving the
+        // topbar icon group off-screen on narrow phones.
+        'min-w-0 flex-1 truncate text-sm font-semibold text-foreground',
         'sm:text-base sm:tracking-tight',
       )}
       aria-live="polite"

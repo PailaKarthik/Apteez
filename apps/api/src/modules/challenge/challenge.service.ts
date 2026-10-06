@@ -630,7 +630,20 @@ export class ChallengeService {
     };
   }
 
-  /** Promotes COUNTDOWN→LIVE and completes on timer expiry, based on the clock. */
+  /**
+   * Promotes COUNTDOWN→LIVE and completes on timer expiry, based on the clock.
+   *
+   * Fair-clock rule: the 5s countdown is wall-clock from match creation, but
+   * the LIVE snapshot (questions + signed URLs) can arrive late on a slow
+   * database — and the 2s server tick can only promote the match after the
+   * fact. Without compensation the player loses that lateness off their
+   * playable time, or the expiry job fires on a match they never saw
+   * ("time's up" with zero questions). So a late promotion shifts the whole
+   * window forward by the lateness, capped at 30s (beyond that the expiry
+   * and grace paths own the match). The TIMER_EXPIRED guard in runFinalize
+   * and the re-check in the expiry processor keep the shifted clock
+   * authoritative — nothing can finalize before it.
+   */
   async syncStatus(challenge: LoadedChallenge): Promise<LoadedChallenge> {
     const now = Date.now();
     if (
@@ -638,12 +651,29 @@ export class ChallengeService {
       challenge.startedAt &&
       now >= challenge.startedAt.getTime()
     ) {
+      const latenessMs = Math.min(now - challenge.startedAt.getTime(), 30_000);
       const updated = await this.prisma.challenge.updateMany({
         where: { id: challenge.id, status: 'COUNTDOWN' },
-        data: { status: 'LIVE' },
+        data: {
+          status: 'LIVE',
+          ...(latenessMs > 0
+            ? {
+                startedAt: new Date(challenge.startedAt.getTime() + latenessMs),
+                endsAt: challenge.endsAt
+                  ? new Date(challenge.endsAt.getTime() + latenessMs)
+                  : undefined,
+              }
+            : {}),
+        },
       });
       if (updated.count > 0) {
         challenge.status = 'LIVE';
+        if (latenessMs > 0) {
+          challenge.startedAt = new Date(challenge.startedAt.getTime() + latenessMs);
+          if (challenge.endsAt) {
+            challenge.endsAt = new Date(challenge.endsAt.getTime() + latenessMs);
+          }
+        }
       }
       return challenge;
     }
@@ -1029,6 +1059,20 @@ export class ChallengeService {
     const challenge = await this.loadChallenge(challengeId);
     if (isTerminal(challenge.status)) {
       return;
+    }
+    // The expiry job is scheduled at match creation while the fair-clock
+    // shift in syncStatus can move endsAt forward: a stale job (or a tick
+    // racing a just-shifted clock) must never finalize a match that still
+    // has time left. Other reasons (all-answered, abandon, cancel) always
+    // proceed — this guard is only about the wall clock.
+    if (reason === 'TIMER_EXPIRED' && challenge.status === 'LIVE' && challenge.endsAt) {
+      if (Date.now() < challenge.endsAt.getTime() - 2000) {
+        this.logger.warn(
+          `challenge.finalize.skipped-early id=${challengeId} endsAt=${challenge.endsAt.toISOString()}`,
+          'Challenge',
+        );
+        return;
+      }
     }
     const now = new Date();
     const sourceStatuses: ChallengeStatus[] = ['MATCHMAKING', 'MATCHED', 'COUNTDOWN', 'LIVE'];

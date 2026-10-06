@@ -37,7 +37,7 @@ export function FavoritesButton(): React.JSX.Element {
           <Heart aria-hidden />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80">
+      <DropdownMenuContent align="end" className="w-80 max-w-[calc(100vw-2rem)]">
         <DropdownMenuLabel className="flex items-center gap-2">
           <Bookmark className="size-4" aria-hidden />
           Favorites

@@ -75,7 +75,7 @@ export default function PublicProfilePage(): React.JSX.Element {
               {profile.tier ? <Badge variant="outline">{profile.tier}</Badge> : null}
             </CardContent>
           </Card>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 min-[500px]:grid-cols-3">
             {[
               { icon: ListChecks, label: 'Solved', value: String(profile.solvedCount) },
               {
@@ -91,14 +91,16 @@ export default function PublicProfilePage(): React.JSX.Element {
             ].map((stat) => (
               <Card key={stat.label}>
                 <CardContent className="flex items-center gap-3 p-4">
-                  <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                  <span className="hidden size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground min-[500px]:flex">
                     <stat.icon className="size-4" aria-hidden />
                   </span>
-                  <span>
+                  <span className="min-w-0">
                     <span className="block font-metric text-lg font-bold leading-none">
                       {stat.value}
                     </span>
-                    <span className="mt-1 block text-xs text-muted-foreground">{stat.label}</span>
+                    <span className="mt-1 block truncate text-xs text-muted-foreground">
+                      {stat.label}
+                    </span>
                   </span>
                 </CardContent>
               </Card>

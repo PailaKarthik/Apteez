@@ -73,7 +73,7 @@ export default function AdminEventsPage(): React.JSX.Element {
   return (
     <div className="space-y-4">
       <form
-        className="flex gap-2"
+        className="flex flex-col gap-2 sm:flex-row"
         onSubmit={(event) => {
           event.preventDefault();
           setSubmitted(q.trim());

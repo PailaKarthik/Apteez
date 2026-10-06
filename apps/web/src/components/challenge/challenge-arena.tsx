@@ -126,10 +126,10 @@ function Scoreboard({ state }: { state: ChallengeStateDto }): React.JSX.Element 
   }, [opponentScore]);
 
   return (
-    <div className="grid grid-cols-3 items-center gap-2 rounded-xl border border-border bg-elevated p-3 text-center">
-      <div>
+    <div className="grid grid-cols-3 items-center gap-1 rounded-xl border border-border bg-elevated p-3 text-center sm:gap-2">
+      <div className="min-w-0">
         <p className="text-metadata uppercase tracking-wide text-subtle-foreground">You</p>
-        <p className="font-metric text-stat text-foreground">{state.self.scoreboard?.score ?? 0}</p>
+        <p className="font-metric text-xl font-bold text-foreground sm:text-stat">{state.self.scoreboard?.score ?? 0}</p>
         <p className="text-xs text-muted-foreground">
           {state.self.scoreboard?.correct ?? 0}✓ {state.self.scoreboard?.wrong ?? 0}✗
         </p>
@@ -139,12 +139,15 @@ function Scoreboard({ state }: { state: ChallengeStateDto }): React.JSX.Element 
         <Swords className="mx-auto size-5" aria-hidden />
       </div>
       <div
-        className={cn('rounded-lg transition-colors', flash ? 'bg-primary/10' : 'bg-transparent')}
+        className={cn(
+          'min-w-0 rounded-lg transition-colors',
+          flash ? 'bg-primary/10' : 'bg-transparent',
+        )}
       >
-        <p className="text-metadata uppercase tracking-wide text-subtle-foreground">
+        <p className="truncate text-metadata uppercase tracking-wide text-subtle-foreground">
           {state.opponent?.displayName ?? 'Opponent'}
         </p>
-        <p className="font-metric text-stat text-foreground" aria-live="polite">
+        <p className="font-metric text-xl font-bold text-foreground sm:text-stat" aria-live="polite">
           {opponentScore}
         </p>
         <p className="text-xs text-muted-foreground">
@@ -227,14 +230,15 @@ function LiveChallenge({
           ) : null}
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={endsIn < 30 ? 'destructive' : 'outline'}>
-            <span className="font-metric">
+          <Badge variant={endsIn < 30 ? 'destructive' : 'outline'} className="shrink-0">
+            <span className="font-metric tabular-nums">
               {Math.floor(endsIn / 60)}:{String(endsIn % 60).padStart(2, '0')}
             </span>
           </Badge>
           <Button
             variant="ghost"
             size="sm"
+            className="shrink-0"
             onClick={() => {
               if (window.confirm('Quit this match? Quitting a live match forfeits it.')) {
                 onQuit();
@@ -257,7 +261,9 @@ function LiveChallenge({
             </Badge>
           </div>
           <QuestionRenderer statement={state.question.statement} assets={state.question.assets} />
-          <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="Answer options">
+          {/* Single column until lg: two ~300px columns squeeze option text
+              and images on phones and small tablets. */}
+          <div className="grid gap-2 lg:grid-cols-2" role="group" aria-label="Answer options">
             {state.question.options.map((option) => (
               <OptionRenderer
                 key={option.id}
@@ -274,8 +280,8 @@ function LiveChallenge({
               className="flex items-center gap-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
             >
               <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              The server is taking longer than usual — the database is waking up. Your answer is
-              safe; please don&apos;t resubmit.
+              The server is taking longer than usual. Your answer is safe; please don&apos;t
+              resubmit.
             </p>
           ) : null}
           {answerError ? (
@@ -286,7 +292,7 @@ function LiveChallenge({
               {answerError} Tap Submit to try again.
             </p>
           ) : null}
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-muted-foreground" aria-live="polite">
               {!readingReady
                 ? `Read the question — answers unlock in ${readingRemaining}s.`
@@ -294,7 +300,7 @@ function LiveChallenge({
                   ? 'Answer sent — waiting for the server…'
                   : 'Select an option, then submit.'}
             </p>
-            <Button onClick={submit} disabled={!selected || !canAnswer}>
+            <Button onClick={submit} disabled={!selected || !canAnswer} className="w-full sm:w-auto">
               {answerPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
               {answerPending ? 'Submitting…' : 'Submit answer'}
             </Button>
@@ -388,12 +394,16 @@ function ResultPanel({
       setRetrying(false);
     }
   };
-  // A finished challenge changes streak, ratings and history everywhere.
+  // A finished challenge changes streak, ratings and history everywhere —
+  // including the profile rating graph, which reads rating-history.
   React.useEffect(() => {
     if (result.data) {
       invalidateActivityQueries(queryClient);
       void queryClient.invalidateQueries({ queryKey: ['challenge', 'history'] });
       void queryClient.invalidateQueries({ queryKey: ['challenge', 'history-stats'] });
+      if (result.data.ratingStatus === 'COMPLETED') {
+        void queryClient.invalidateQueries({ queryKey: ['profile', 'rating-history'] });
+      }
     }
   }, [result.data, queryClient]);
 
@@ -453,10 +463,10 @@ function ResultPanel({
           </p>
         </div>
 
-        <div className="grid w-full max-w-md grid-cols-2 gap-3">
+        <div className="grid w-full max-w-md grid-cols-1 gap-3 min-[480px]:grid-cols-2">
           <div className="rounded-xl border border-border bg-elevated p-4">
             <p className="text-metadata uppercase tracking-wide text-subtle-foreground">You</p>
-            <p className="font-metric text-stat text-foreground">{selfResult.score}</p>
+            <p className="font-metric text-xl font-bold text-foreground sm:text-stat">{selfResult.score}</p>
             <p className="text-xs text-muted-foreground">
               {selfResult.correct}✓ {selfResult.wrong}✗ {selfResult.unanswered}–
             </p>
@@ -465,7 +475,7 @@ function ResultPanel({
             <p className="text-metadata uppercase tracking-wide text-subtle-foreground">
               {state.opponent?.displayName ?? 'Opponent'}
             </p>
-            <p className="font-metric text-stat text-foreground">
+            <p className="font-metric text-xl font-bold text-foreground sm:text-stat">
               {selfIsPlayer1 ? data.player2.score : data.player1.score}
             </p>
             <p className="text-xs text-muted-foreground">
@@ -475,7 +485,7 @@ function ResultPanel({
           </div>
         </div>
         {data.ratingStatus === 'COMPLETED' && !data.isSolo ? (
-          <div className="flex w-full max-w-md items-center justify-center gap-6 rounded-xl border border-border bg-elevated p-4">
+          <div className="flex w-full max-w-md flex-col items-center justify-center gap-3 rounded-xl border border-border bg-elevated p-4 sm:flex-row sm:gap-6">
             <div className="text-center">
               <p className="text-metadata uppercase tracking-wide text-subtle-foreground">
                 Your rating
@@ -657,8 +667,12 @@ export function ChallengeArena(): React.JSX.Element {
 
 /**
  * Proper 5→4→3→2→1→GO countdown. The lightweight MATCHED payload enters this
- * panel instantly; the full state hydrates it right after (a "preparing"
- * note covers slow servers honestly instead of a stuck digit).
+ * panel instantly; the full state hydrates it right after.
+ *
+ * Honesty rule: "GO!" renders ONLY once the full state arrived. The digit
+ * countdown runs on the lightweight payload's clock, but the game itself
+ * starts when the server says LIVE with questions — showing GO! before that
+ * stranded players on a dead screen whenever the state snapshot was slow.
  */
 function CountdownPanel({
   state,
@@ -680,7 +694,7 @@ function CountdownPanel({
 
   return (
     <Card>
-      <CardContent className="flex flex-col items-center gap-4 p-10 text-center">
+      <CardContent className="flex flex-col items-center gap-4 p-6 text-center sm:p-10">
         <Badge variant="success">
           <Check className="size-3" aria-hidden />
           {isSolo ? 'Solo run ready' : 'Opponent found'}
@@ -689,13 +703,27 @@ function CountdownPanel({
           {opponentName}
           <span className="font-metric ml-2 text-muted-foreground">{opponentRating}</span>
         </p>
-        <div className="flex h-24 items-center justify-center" aria-live="polite">
-          <span
-            key={display}
-            className="font-metric inline-block text-7xl font-extrabold text-primary animate-[countdown-pop_0.9s_ease-out]"
-          >
-            {display > 0 ? display : 'GO!'}
-          </span>
+        <div className="flex h-24 items-center justify-center sm:h-28" aria-live="polite">
+          {display > 0 ? (
+            <span
+              key={display}
+              className="font-metric inline-block text-5xl font-extrabold tabular-nums text-primary animate-[countdown-pop_0.9s_ease-out] sm:text-7xl"
+            >
+              {display}
+            </span>
+          ) : hydrating ? (
+            <span className="flex items-center gap-3 text-xl font-semibold text-muted-foreground">
+              <Loader2 className="size-8 animate-spin text-primary" aria-hidden />
+              Starting…
+            </span>
+          ) : (
+            <span
+              key="go"
+              className="font-metric inline-block text-5xl font-extrabold text-primary animate-[countdown-pop_0.9s_ease-out] sm:text-7xl"
+            >
+              GO!
+            </span>
+          )}
         </div>
         <Progress
           value={display > 0 ? ((total - display + 1) / (total + 1)) * 100 : 100}

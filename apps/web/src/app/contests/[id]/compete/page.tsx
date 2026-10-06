@@ -229,7 +229,12 @@ export default function ContestCompetePage(): React.JSX.Element {
                       key={option.id}
                       option={option}
                       selected={option.id === current.selectedOptionId}
-                      disabled={!current.answerable || answer.isPending}
+                      // Never freeze on the in-flight request: the selection
+                      // paints optimistically (see useAnswerContestQuestion)
+                      // and the server upsert is idempotent, so tapping
+                      // again while saving just re-saves. Only the contest
+                      // rules (answerable) can lock the options.
+                      disabled={!current.answerable}
                       onSelect={onSelect}
                     />
                   ))}
@@ -282,8 +287,10 @@ export default function ContestCompetePage(): React.JSX.Element {
             <Card>
               <CardContent className="space-y-3 p-6" id="contest-submit">
                 <CardTitle className="text-card-title">Navigator</CardTitle>
+                {/* 44px targets (WCAG minimum); long contests scroll inside
+                    instead of pushing submit below the fold. */}
                 <div
-                  className="grid grid-cols-5 gap-2"
+                  className="grid max-h-[240px] grid-cols-5 gap-2 overflow-y-auto"
                   role="group"
                   aria-label="Question navigator"
                 >
@@ -296,7 +303,7 @@ export default function ContestCompetePage(): React.JSX.Element {
                       aria-label={`Go to question ${item.position + 1}: ${item.state}`}
                       aria-current={item.state === 'current' ? 'true' : undefined}
                       className={cn(
-                        'flex size-9 items-center justify-center rounded-lg border text-sm transition-colors hover:border-primary/60 disabled:opacity-60',
+                        'flex min-h-11 min-w-11 items-center justify-center rounded-lg border text-sm transition-colors hover:border-primary/60 disabled:opacity-60',
                         item.state === 'current'
                           ? 'border-primary bg-primary/10 font-semibold text-primary'
                           : item.state === 'answered'

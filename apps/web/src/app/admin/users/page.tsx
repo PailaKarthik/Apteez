@@ -121,11 +121,11 @@ export default function AdminUsersPage(): React.JSX.Element {
             <tbody>
               {data.items.map((row) => (
                 <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/40">
-                  <td className="px-3 py-2">
-                    <span className="block font-medium">{row.displayName}</span>
-                    <span className="block text-xs text-muted-foreground">
+                  <td className="max-w-56 px-3 py-2">
+                    <span className="block truncate font-medium">{row.displayName}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
                       {row.username ? `@${row.username} · ` : ''}
-                      {row.email}
+                      <span className="break-all">{row.email}</span>
                     </span>
                   </td>
                   <td className="px-3 py-2">

@@ -44,7 +44,7 @@ function PointsOverview(): React.JSX.Element {
     return <ErrorState description="Could not load your points." onRetry={() => void refetch()} />;
   }
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-1 gap-3 min-[500px]:grid-cols-3">
       {[
         { label: 'Balance', value: String(data.total) },
         { label: 'Lifetime earned', value: String(data.lifetimeEarned) },
@@ -52,8 +52,8 @@ function PointsOverview(): React.JSX.Element {
       ].map((stat) => (
         <Card key={stat.label}>
           <CardContent className="space-y-1 p-4">
-            <p className="font-metric text-2xl font-bold">{stat.value}</p>
-            <p className="text-xs text-muted-foreground">{stat.label}</p>
+            <p className="font-metric text-xl font-bold sm:text-2xl">{stat.value}</p>
+            <p className="text-xs leading-snug text-muted-foreground">{stat.label}</p>
           </CardContent>
         </Card>
       ))}
@@ -383,11 +383,19 @@ export default function RewardsPage(): React.JSX.Element {
         </p>
         <PointsOverview />
         <Tabs defaultValue="catalog">
-          <TabsList>
-            <TabsTrigger value="catalog">Catalog</TabsTrigger>
-            <TabsTrigger value="history">History</TabsTrigger>
-            <TabsTrigger value="redemptions">My redemptions</TabsTrigger>
-            <TabsTrigger value="earn">Ways to earn</TabsTrigger>
+          <TabsList className="max-w-full justify-start overflow-x-auto">
+            <TabsTrigger value="catalog" className="shrink-0 whitespace-nowrap">
+              Catalog
+            </TabsTrigger>
+            <TabsTrigger value="history" className="shrink-0 whitespace-nowrap">
+              History
+            </TabsTrigger>
+            <TabsTrigger value="redemptions" className="shrink-0 whitespace-nowrap">
+              My redemptions
+            </TabsTrigger>
+            <TabsTrigger value="earn" className="shrink-0 whitespace-nowrap">
+              Ways to earn
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="catalog" className="pt-4">
             <Catalog balance={points?.total ?? 0} />

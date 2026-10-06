@@ -24,10 +24,12 @@ export function AppShell({ children }: { children: React.ReactNode }): React.JSX
           <PageContainer>{children}</PageContainer>
         </main>
         <SiteFooter />
-        {/* Bottom spacer keeps content clear of the fixed mobile tab bar. */}
-        <div className="h-16 md:hidden" aria-hidden />
+        {/* Bottom spacer keeps content clear of the fixed mobile tab bar.
+            Breakpoint matches the tab bar itself (lg) so tablets never lose
+            navigation: sidebar ≥lg, tab bar <lg, drawer always available. */}
+        <div className="h-16 lg:hidden" aria-hidden />
       </div>
-      <MobileTabBar className="md:hidden" />
+      <MobileTabBar className="lg:hidden" />
     </div>
   );
 }

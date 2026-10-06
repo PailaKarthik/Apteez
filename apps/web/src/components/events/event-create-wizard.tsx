@@ -197,18 +197,26 @@ export function EventCreateWizard(): React.JSX.Element {
 
   return (
     <Card>
-      <CardContent className="space-y-6 p-6">
-        <ol className="flex flex-wrap gap-2 text-sm">
+      <CardContent className="space-y-6 p-4 sm:p-6">
+        {/* Scrollable stepper: 7 steps never fit a 360px row; the current
+            position stays readable via the label below. */}
+        <ol className="flex flex-nowrap gap-3 overflow-x-auto whitespace-nowrap pb-1 text-sm">
           {STEPS.map((label, index) => (
             <li
               key={label}
-              className={index === step ? 'font-semibold text-primary' : 'text-muted-foreground'}
+              aria-current={index === step ? 'step' : undefined}
+              className={
+                index === step ? 'shrink-0 font-semibold text-primary' : 'shrink-0 text-muted-foreground'
+              }
             >
               {index + 1}. {label}
               {index < STEPS.length - 1 ? ' ›' : ''}
             </li>
           ))}
         </ol>
+        <p className="text-xs text-muted-foreground" aria-live="polite">
+          Step {step + 1} of {STEPS.length}: {STEPS[step]}
+        </p>
         {step === 0 ? (
           <div className="space-y-4">
             <div className="space-y-2">

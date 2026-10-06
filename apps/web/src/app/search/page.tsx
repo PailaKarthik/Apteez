@@ -126,9 +126,10 @@ function SearchPageInner(): React.JSX.Element {
       </form>
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as SearchTab)}>
-        <TabsList>
+        {/* Scrollable tab row: seven tabs never fit a 360px viewport. */}
+        <TabsList className="max-w-full justify-start overflow-x-auto">
           {TABS.map((entry) => (
-            <TabsTrigger key={entry.value} value={entry.value}>
+            <TabsTrigger key={entry.value} value={entry.value} className="shrink-0 whitespace-nowrap">
               {entry.label}
             </TabsTrigger>
           ))}
@@ -136,9 +137,9 @@ function SearchPageInner(): React.JSX.Element {
       </Tabs>
 
       {tab === 'PROBLEM' ? (
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
           <Select value={difficulty} onValueChange={setDifficulty}>
-            <SelectTrigger className="w-36" aria-label="Difficulty filter">
+            <SelectTrigger className="w-full sm:w-36" aria-label="Difficulty filter">
               <SelectValue placeholder="Difficulty" />
             </SelectTrigger>
             <SelectContent>
@@ -149,7 +150,7 @@ function SearchPageInner(): React.JSX.Element {
             </SelectContent>
           </Select>
           <Select value={exam} onValueChange={setExam}>
-            <SelectTrigger className="w-44" aria-label="Exam filter">
+            <SelectTrigger className="w-full sm:w-44" aria-label="Exam filter">
               <SelectValue placeholder="Exam" />
             </SelectTrigger>
             <SelectContent>
@@ -162,7 +163,7 @@ function SearchPageInner(): React.JSX.Element {
             </SelectContent>
           </Select>
           <Select value={sort} onValueChange={(value) => setSort(value as typeof sort)}>
-            <SelectTrigger className="w-40" aria-label="Sort order">
+            <SelectTrigger className="w-full sm:w-40" aria-label="Sort order">
               <SelectValue placeholder="Sort" />
             </SelectTrigger>
             <SelectContent>

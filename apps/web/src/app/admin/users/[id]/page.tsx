@@ -110,9 +110,9 @@ export default function AdminUserDetailPage(): React.JSX.Element {
             <CardTitle className="text-card-title">{data.displayName}</CardTitle>
             <Badge variant={data.isActive ? 'success' : 'destructive'}>{data.accountStatus}</Badge>
           </div>
-          <p className="text-sm text-muted-foreground">
+          <p className="break-words text-sm text-muted-foreground">
             {data.username ? `@${data.username} · ` : ''}
-            {data.email}
+            <span className="break-all">{data.email}</span>
             {data.institution ? ` · ${data.institution}` : ''}
             {data.country ? ` · ${data.country}` : ''}
           </p>
@@ -217,7 +217,7 @@ export default function AdminUserDetailPage(): React.JSX.Element {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Solved" value={String(data.stats.solvedCount)} />
         <Stat label="Submissions" value={String(data.stats.submissions)} />
         <Stat label="Challenges" value={String(data.stats.challengesPlayed)} />

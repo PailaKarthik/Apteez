@@ -108,11 +108,12 @@ export function EventLiveView({ eventId }: { eventId: string }): React.JSX.Eleme
       <div className="space-y-4 lg:col-span-2">
         <Card>
           <CardContent className="space-y-4 p-6">
-            <div className="flex items-center justify-between gap-2">
-              <Badge variant="success">
-                Live · <span className="font-metric">{formatCountdown(remaining)}</span> left
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Badge variant="success" className="shrink-0">
+                Live ·{' '}
+                <span className="font-metric tabular-nums">{formatCountdown(remaining)}</span> left
               </Badge>
-              <span className="text-sm text-muted-foreground">
+              <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
                 Q <span className="font-metric">{(session.currentPosition ?? 0) + 1}</span> /{' '}
                 <span className="font-metric">{session.totalQuestions}</span>
               </span>
@@ -181,14 +182,35 @@ export function EventLiveView({ eventId }: { eventId: string }): React.JSX.Eleme
         <Card>
           <CardContent className="space-y-3 p-6">
             <CardTitle className="text-card-title">Navigator</CardTitle>
-            <div className="grid grid-cols-5 gap-2">
+            {/* Real buttons (44px targets): position jumps reuse the review
+                mutation with an unchanged flag, mirroring contests. Long
+                question lists scroll instead of pushing submit off-screen. */}
+            <div
+              className="grid max-h-[240px] grid-cols-5 gap-2 overflow-y-auto"
+              role="group"
+              aria-label="Question navigator"
+            >
               {session.questions.map((q) => (
-                <span
+                <button
                   key={q.questionId}
-                  className={`rounded-md border p-2 text-center font-metric text-sm ${q.state === 'current' ? 'border-primary bg-primary/10' : q.state === 'answered' ? 'border-success/50' : q.state === 'review' ? 'border-warning/60' : ''}`}
+                  type="button"
+                  disabled={review.isPending || q.position === session.currentPosition}
+                  onClick={() =>
+                    current &&
+                    review.mutate(
+                      {
+                        questionId: current.questionId,
+                        markedForReview: current.markedForReview,
+                        currentPosition: q.position,
+                      },
+                      { onSuccess: () => void refetch() },
+                    )
+                  }
+                  aria-label={`Go to question ${q.position + 1}: ${q.state}`}
+                  className={`flex min-h-11 min-w-11 items-center justify-center rounded-md border text-center font-metric text-sm disabled:opacity-60 ${q.state === 'current' ? 'border-primary bg-primary/10' : q.state === 'answered' ? 'border-success/50' : q.state === 'review' ? 'border-warning/60' : ''}`}
                 >
                   {q.position + 1}
-                </span>
+                </button>
               ))}
             </div>
             <p className="text-sm text-muted-foreground">

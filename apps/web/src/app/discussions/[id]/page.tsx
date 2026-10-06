@@ -64,25 +64,27 @@ export default function DiscussionThreadPage(): React.JSX.Element {
   };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-6">
+    <div className="mx-auto max-w-3xl space-y-6 p-4 sm:p-6">
       <Link href="/discussions" className="inline-flex items-center gap-1 text-sm hover:underline">
-        <ArrowLeft className="h-4 w-4" /> All discussions
+        <ArrowLeft className="h-4 w-4 shrink-0" /> All discussions
       </Link>
 
-      <article className="space-y-3">
-        <h1 className="flex items-center gap-2 text-2xl font-semibold">
-          {thread.isResolved ? <CheckCircle2 className="h-5 w-5 text-emerald-500" /> : null}
-          {thread.isLocked ? <Lock className="h-5 w-5 text-muted-foreground" /> : null}
-          {thread.title}
+      <article className="min-w-0 space-y-3">
+        <h1 className="flex min-w-0 items-start gap-2 break-words text-2xl font-semibold">
+          {thread.isResolved ? (
+            <CheckCircle2 className="mt-1 h-5 w-5 shrink-0 text-emerald-500" />
+          ) : null}
+          {thread.isLocked ? <Lock className="mt-1 h-5 w-5 shrink-0 text-muted-foreground" /> : null}
+          <span className="min-w-0">{thread.title}</span>
         </h1>
-        <p className="text-sm text-muted-foreground">
+        <p className="break-words text-sm text-muted-foreground">
           {thread.author.displayName} · {new Date(thread.createdAt).toLocaleString()} ·{' '}
           {thread.viewCount} views
         </p>
-        <div className="whitespace-pre-wrap text-sm">{thread.body}</div>
+        <div className="break-words whitespace-pre-wrap text-sm">{thread.body}</div>
         <div className="flex flex-wrap items-center gap-2">
           {thread.tags.map((tag) => (
-            <span key={tag} className="rounded bg-muted px-2 py-0.5 text-xs">
+            <span key={tag} className="max-w-full break-all rounded bg-muted px-2 py-0.5 text-xs">
               #{tag}
             </span>
           ))}
@@ -113,14 +115,16 @@ export default function DiscussionThreadPage(): React.JSX.Element {
         <h2 className="text-lg font-medium">{thread.replyTotal} replies</h2>
         <ul className="space-y-3">
           {thread.replies.map((reply) => (
-            <li key={reply.id} className="rounded-lg border border-input p-4">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium">{reply.author.displayName}</span>
-                <span className="text-muted-foreground">
+            <li key={reply.id} className="min-w-0 rounded-lg border border-input p-4">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+                <span className="min-w-0 flex-1 truncate font-medium">
+                  {reply.author.displayName}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">
                   {new Date(reply.createdAt).toLocaleString()}
                 </span>
               </div>
-              <p className="mt-2 whitespace-pre-wrap text-sm">{reply.body}</p>
+              <p className="mt-2 break-words whitespace-pre-wrap text-sm">{reply.body}</p>
               <div className="mt-3 flex items-center gap-3 text-xs">
                 <button
                   type="button"

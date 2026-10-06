@@ -98,7 +98,7 @@ export function ActivityHeatmap({
 
   return (
     <Card>
-      <CardContent className="space-y-3 p-6">
+      <CardContent className="space-y-3 p-4 sm:p-6">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-card-title">Activity</CardTitle>
           <span className="text-sm text-muted-foreground">

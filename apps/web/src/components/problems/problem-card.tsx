@@ -52,8 +52,8 @@ export function ProblemCard({ problem, className }: ProblemCardProps): React.JSX
             </div>
           </div>
 
-          <div className="mt-auto flex items-center justify-between gap-3 pt-1">
-            <div className="flex flex-wrap items-center gap-1.5">
+          <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <Badge variant={DIFFICULTY_TONE[problem.difficulty]}>
                 {DIFFICULTY_LABEL[problem.difficulty]}
               </Badge>
@@ -70,7 +70,7 @@ export function ProblemCard({ problem, className }: ProblemCardProps): React.JSX
                 </Badge>
               ) : null}
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex shrink-0 items-center gap-3">
               <div className="text-right">
                 <p className="font-metric text-sm font-semibold text-foreground">
                   {problem.rating}

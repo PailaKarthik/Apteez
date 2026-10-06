@@ -19,7 +19,7 @@ function AssetFigure({ asset }: { asset: ProblemAssetDto }): React.JSX.Element |
         src={asset.url}
         alt={asset.altText ?? 'Question illustration'}
         loading="lazy"
-        className="mx-auto max-h-[420px] w-auto max-w-full object-contain"
+        className="mx-auto max-h-[240px] w-auto max-w-full object-contain sm:max-h-[420px]"
       />
     </figure>
   );

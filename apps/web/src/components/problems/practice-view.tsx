@@ -136,7 +136,7 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
           <div className="h-5 w-40 animate-pulse rounded bg-muted" />
           <div className="h-7 w-2/3 animate-pulse rounded bg-muted" />
           <div className="h-24 w-full animate-pulse rounded bg-muted" />
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2 lg:grid-cols-2">
             {Array.from({ length: 4 }, (_, index) => (
               <div key={index} className="h-14 animate-pulse rounded-xl bg-muted" />
             ))}
@@ -197,7 +197,7 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
 
           <QuestionRenderer statement={data.statement} assets={data.assets} />
 
-          <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="Answer options">
+          <div className="grid gap-2 lg:grid-cols-2" role="group" aria-label="Answer options">
             {data.options.map((option) => {
               const isChosen = isAnswered
                 ? result?.result.selectedOptionId === option.id

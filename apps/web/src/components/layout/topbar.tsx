@@ -12,21 +12,29 @@ import { UserMenu } from './user-menu';
  * Persistent top bar per the Figma structure: section context on the left;
  * streak, favorites, notifications, help, theme and profile on the right.
  * Streak/favorites compact down on mobile; nothing overflows.
+ *
+ * Crowding rule: at 360px the icon group alone exceeds the viewport, so the
+ * help menu hides below sm and the (wide, 3-segment) theme toggle hides
+ * below md — both stay one tap away in the drawer/profile menu.
  */
 export function Topbar(): React.JSX.Element {
   return (
-    <header className="sticky top-0 z-30 flex h-top-bar shrink-0 items-center gap-2 border-b border-border bg-background/85 px-3 backdrop-blur sm:gap-3 sm:px-6">
+    <header className="sticky top-0 z-30 flex h-top-bar shrink-0 items-center gap-1.5 border-b border-border bg-background/85 px-3 backdrop-blur sm:gap-3 sm:px-6">
       <MobileNav />
       <Breadcrumb />
       <div className="ml-auto hidden min-w-0 flex-1 max-w-md items-center px-2 md:flex">
         <GlobalSearch />
       </div>
-      <div className="ml-auto flex items-center gap-1 sm:gap-1.5 md:ml-0">
+      <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1.5 md:ml-0">
         <StreakPill />
         <FavoritesButton />
         <NotificationsMenu />
-        <HelpMenu />
-        <ThemeToggle />
+        <span className="hidden sm:block">
+          <HelpMenu />
+        </span>
+        <span className="hidden md:block">
+          <ThemeToggle />
+        </span>
         <span className="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden />
         <UserMenu />
       </div>

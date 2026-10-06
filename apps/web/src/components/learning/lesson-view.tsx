@@ -61,7 +61,10 @@ export function LearningLessonView({
 
   return (
     <div className="space-y-8">
-      <nav aria-label="Breadcrumb" className="text-sm text-muted-foreground">
+      <nav
+        aria-label="Breadcrumb"
+        className="overflow-x-auto whitespace-nowrap text-sm text-muted-foreground"
+      >
         <Link href="/explore" className="transition-colors hover:text-foreground">
           Explore
         </Link>
@@ -86,7 +89,9 @@ export function LearningLessonView({
         <span aria-hidden className="mx-2">
           /
         </span>
-        <span className="text-foreground">{current.title}</span>
+        <span className="inline-block max-w-[40vw] truncate align-bottom text-foreground">
+          {current.title}
+        </span>
       </nav>
 
       <header className="space-y-4 border-b border-border pb-6">

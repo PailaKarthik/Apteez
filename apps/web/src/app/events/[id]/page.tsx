@@ -224,7 +224,7 @@ export default function EventDetailPage(): React.JSX.Element {
                       key={row.userId}
                       className={`flex items-center justify-between gap-2 rounded-lg border p-3 text-sm ${row.isCurrentUser ? 'border-primary/50 bg-primary/5' : 'border-border'}`}
                     >
-                      <span className="min-w-0">
+                      <span className="min-w-0 flex-1">
                         <span className="font-metric">#{row.rank}</span>{' '}
                         <ProfileName username={row.username} displayName={row.displayName} />
                         {row.institution ? (
@@ -233,7 +233,7 @@ export default function EventDetailPage(): React.JSX.Element {
                           </span>
                         ) : null}
                       </span>
-                      <span className="shrink-0 text-right">
+                      <span className="shrink-0 text-right tabular-nums">
                         <span className="font-metric">{row.score} pts</span>
                         <span className="block text-xs text-muted-foreground">
                           <span className="font-metric">{row.correctCount}</span>C ·{' '}

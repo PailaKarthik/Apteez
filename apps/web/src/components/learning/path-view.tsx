@@ -90,7 +90,10 @@ export function LearningPathView({ slug }: { slug: string }): React.JSX.Element 
   return (
     <div className="space-y-8">
       <div className="space-y-4">
-        <nav aria-label="Breadcrumb" className="text-sm text-muted-foreground">
+        <nav
+          aria-label="Breadcrumb"
+          className="overflow-x-auto whitespace-nowrap text-sm text-muted-foreground"
+        >
           <Link href="/explore" className="transition-colors hover:text-foreground">
             Explore
           </Link>

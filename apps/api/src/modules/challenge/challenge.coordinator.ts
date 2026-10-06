@@ -223,11 +223,11 @@ export class ChallengeCoordinator implements OnModuleDestroy, OnModuleInit {
 
   /** Shared post-creation wiring: timers, state push, crash-safe job backstops. */
   private async afterMatchCreated(challengeId: string): Promise<void> {
-    // Instant lightweight MATCHED first: the full state snapshot needs
-    // question content + signed URLs (seconds on a slow DB), which would
-    // otherwise eat most of the 5s countdown before the client sees anything.
-    await this.pushMatched(challengeId);
-    await this.pushState(challengeId);
+    // The lightweight MATCHED preview and the full state snapshot are
+    // independent reads — fire them together. Sequential awaits serialized
+    // two slow-DB round trips here, which is exactly the blackout window
+    // where the client sat on "GO!" with no questions.
+    await Promise.all([this.pushMatched(challengeId), this.pushState(challengeId)]);
     this.ensureChallengeTick(challengeId);
     try {
       const row = await this.challenges.timingFor(challengeId);

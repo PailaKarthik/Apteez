@@ -183,10 +183,12 @@ export function ContestLockdown({
       onPaste={blockCopy('PASTE')}
       onContextMenu={(event) => event.preventDefault()}
     >
-      {/* Identity watermark: screenshots stay possible, leaks stay traceable. */}
+      {/* Identity watermark: screenshots stay possible, leaks stay traceable.
+          Scoped absolute (not fixed): it covers the runner content without
+          floating above the sticky topbar and mobile tab bar. */}
       <div
         aria-hidden
-        className="pointer-events-none fixed inset-0 z-40 overflow-hidden opacity-[0.05]"
+        className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-[0.05]"
       >
         <div className="absolute inset-[-50%] grid grid-cols-3 content-center gap-16 rotate-[-18deg]">
           {Array.from({ length: 24 }).map((_, index) => (
@@ -203,10 +205,10 @@ export function ContestLockdown({
         <div
           role="alertdialog"
           aria-label="Fullscreen exited"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-background/90 p-4 backdrop-blur-sm"
         >
-          <Card className="max-w-md">
-            <CardContent className="flex flex-col items-center gap-4 p-8 text-center">
+          <Card className="max-h-[90dvh] w-full max-w-md overflow-y-auto">
+            <CardContent className="flex flex-col items-center gap-4 p-6 text-center sm:p-8">
               <span className="flex size-14 items-center justify-center rounded-full bg-destructive/15 text-destructive">
                 <TriangleAlert className="size-7" aria-hidden />
               </span>
