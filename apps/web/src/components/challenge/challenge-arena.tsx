@@ -8,15 +8,12 @@ import {
   Button,
   Card,
   CardContent,
-  CardDescription,
-  CardTitle,
   EmptyState,
   ErrorState,
   LoadingState,
   Pagination,
   Progress,
   SectionHeader,
-  Skeleton,
   cn,
 } from '@apteez/ui';
 import { OptionRenderer } from '@/components/problems/option-renderer';
@@ -63,6 +60,56 @@ function useCountdown(target: string | null, serverTime: string | null): number 
   return remaining;
 }
 
+function DuelHero(): React.JSX.Element {
+  const stats = useChallengeHistoryStats(undefined);
+  const matches = stats.data?.matches ?? 0;
+  const winRate = stats.data?.winRate ?? 0;
+  const best = stats.data?.bestScore ?? null;
+  return (
+    <div className="page-enter relative overflow-hidden rounded-3xl border border-border">
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.14] via-card to-card" aria-hidden />
+      <div className="aurora-field" aria-hidden>
+        <span className="aurora-orb -left-14 -top-20 size-64 bg-primary/30" />
+        <span className="aurora-orb right-[5%] top-[-50%] size-56 bg-primary/20 [animation-delay:-5s]" />
+        <span className="dot-grid absolute inset-0 opacity-60" />
+      </div>
+      <div className="relative flex flex-col gap-4 p-6 sm:p-7 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0 max-w-xl space-y-2">
+          <p className="page-enter inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            <span className="live-dot" aria-hidden />
+            Head-to-head arena
+          </p>
+          <h2 className="page-enter-1 text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">
+            Choose your <span className="gradient-text">battlefield</span>
+          </h2>
+          <p className="page-enter-2 text-sm leading-relaxed text-muted-foreground sm:text-base">
+            Seven aptitude domains. Endless questions. Beat a live opponent to move your rating —
+            or warm up solo while matchmaking hunts.
+          </p>
+        </div>
+        <div className="page-enter-2 glass grid w-full max-w-xs shrink-0 grid-cols-3 gap-2 rounded-2xl border border-border p-4 shadow-xl lg:w-72">
+          {[
+            { label: 'Duels', value: stats.isPending ? '…' : String(matches) },
+            { label: 'Win rate', value: stats.isPending ? '…' : `${winRate}%` },
+            { label: 'Best', value: stats.isPending ? '…' : best === null ? '—' : String(best) },
+          ].map((stat) => (
+            <div key={stat.label} className="text-center">
+              <p className="gradient-text-cool font-metric text-xl font-extrabold">{stat.value}</p>
+              <p className="mt-0.5 text-[11px] uppercase tracking-wider text-muted-foreground">
+                {stat.label}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div
+        className="relative h-1 bg-gradient-to-r from-primary via-accent-foreground to-primary"
+        aria-hidden
+      />
+    </div>
+  );
+}
+
 function DomainPicker({
   onSelect,
   isConnecting,
@@ -72,39 +119,86 @@ function DomainPicker({
 }): React.JSX.Element {
   const domains = useChallengeDomains();
   if (domains.isPending) {
-    return <LoadingState title="Loading challenge domains…" />;
+    return (
+      <div>
+        <div className="loading-rail mb-3 h-1" aria-hidden>
+          <span />
+        </div>
+        <LoadingState title="Loading challenge domains…" />
+      </div>
+    );
   }
   if (domains.isError) {
     return <ErrorState title="Could not load domains" onRetry={() => void domains.refetch()} />;
   }
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {(domains.data ?? []).map((domain) => (
-        <Card key={domain.slug} className="transition-colors hover:border-primary/50">
-          <CardContent className="flex h-full flex-col gap-2 p-5">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-card-title">{domain.name}</CardTitle>
-              <Badge variant="secondary">
-                <span className="font-metric">{domain.problemCount}</span>
-              </Badge>
-            </div>
-            <CardDescription>
-              {Math.round(domain.durationSeconds / 60)} min · endless questions · +1 / −1
-            </CardDescription>
-            <p className="text-xs text-muted-foreground">
-              Rated vs a live opponent · solo bot run if nobody joins · solo is unrated
-            </p>
-            <Button
-              className="mt-auto"
-              disabled={isConnecting || domain.problemCount === 0}
-              onClick={() => onSelect(domain.slug)}
+    <div>
+      <div className="mb-3 flex items-center gap-3">
+        <h3 className="shrink-0 text-sm font-bold uppercase tracking-[0.14em] text-muted-foreground">
+          Seven battlefields
+        </h3>
+        <span className="h-px flex-1 bg-gradient-to-r from-primary/30 to-transparent" aria-hidden />
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {(domains.data ?? []).map((domain, index) => {
+          const empty = domain.problemCount === 0;
+          return (
+            <div
+              key={domain.slug}
+              className="animate-fade-up"
+              style={{ animationDelay: `${Math.min(index, 6) * 70}ms` }}
             >
-              <Swords aria-hidden />
-              Find opponent
-            </Button>
-          </CardContent>
-        </Card>
-      ))}
+              <button
+                type="button"
+                disabled={isConnecting || empty}
+                onClick={() => onSelect(domain.slug)}
+                aria-label={`Find opponent in ${domain.name}: ${domain.problemCount} problems, ${Math.round(domain.durationSeconds / 60)} minutes`}
+                className="group flex w-full items-center gap-4 rounded-2xl border border-border bg-card p-4 text-left shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-primary/50 hover:shadow-xl hover:shadow-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:border-border disabled:hover:shadow-sm"
+              >
+                <span className="relative shrink-0" aria-hidden>
+                  <span className="absolute inset-0 rounded-2xl bg-primary/30 blur-lg opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                  <span className="icon-tile relative size-14 text-2xl font-extrabold">
+                    {domain.name.charAt(0).toUpperCase()}
+                  </span>
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate text-base font-bold text-foreground transition-colors group-hover:text-primary">
+                      {domain.name}
+                    </span>
+                    <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 font-metric text-xs font-bold text-primary">
+                      {domain.problemCount}
+                    </span>
+                  </span>
+                  <span className="mt-1 block truncate text-xs text-muted-foreground">
+                    {Math.round(domain.durationSeconds / 60)} min · endless ·{' '}
+                    <span className="font-semibold text-success">+1</span>
+                    {' / '}
+                    <span className="font-semibold text-destructive">−1</span>
+                    {empty ? ' · empty for now' : ''}
+                  </span>
+                  <span className="mt-2 block h-1 overflow-hidden rounded-full bg-muted" aria-hidden>
+                    <span className="block h-full w-0 rounded-full bg-gradient-to-r from-primary to-accent-foreground transition-[width] duration-500 group-hover:w-full" />
+                  </span>
+                </span>
+                <span
+                  className={`flex size-12 shrink-0 items-center justify-center rounded-full transition-all duration-300 ${
+                    empty
+                      ? 'bg-muted text-muted-foreground'
+                      : 'bg-primary text-primary-foreground shadow-lg shadow-primary/30 group-hover:scale-110 group-hover:shadow-xl group-hover:shadow-primary/40'
+                  }`}
+                  aria-hidden
+                >
+                  <Swords className="size-5 transition-transform duration-300 group-hover:rotate-12" />
+                </span>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        Rated vs a live opponent · solo run starts automatically if nobody joins · solo is unrated.
+      </p>
     </div>
   );
 }
@@ -126,22 +220,28 @@ function Scoreboard({ state }: { state: ChallengeStateDto }): React.JSX.Element 
   }, [opponentScore]);
 
   return (
-    <div className="grid grid-cols-3 items-center gap-1 rounded-xl border border-border bg-elevated p-3 text-center sm:gap-2">
+    <div className="glass grid grid-cols-3 items-center gap-1 rounded-2xl border border-border p-3 text-center shadow-sm sm:gap-2">
       <div className="min-w-0">
-        <p className="text-metadata uppercase tracking-wide text-subtle-foreground">You</p>
-        <p className="font-metric text-xl font-bold text-foreground sm:text-stat">{state.self.scoreboard?.score ?? 0}</p>
+        <p className="flex items-center justify-center gap-1.5 text-metadata uppercase tracking-wide text-subtle-foreground">
+          <span className="live-dot" aria-hidden />
+          You
+        </p>
+        <p className="gradient-text-cool font-metric text-xl font-extrabold sm:text-stat">{state.self.scoreboard?.score ?? 0}</p>
         <p className="text-xs text-muted-foreground">
-          {state.self.scoreboard?.correct ?? 0}✓ {state.self.scoreboard?.wrong ?? 0}✗
+          <span className="text-success">{state.self.scoreboard?.correct ?? 0}✓</span>{' '}
+          <span className="text-destructive">{state.self.scoreboard?.wrong ?? 0}✗</span>
         </p>
       </div>
       <div className="text-muted-foreground">
         <p className="text-metadata uppercase tracking-wide text-subtle-foreground">vs</p>
-        <Swords className="mx-auto size-5" aria-hidden />
+        <span className="mx-auto flex size-9 items-center justify-center rounded-full bg-primary/10">
+          <Swords className="size-5 text-primary" aria-hidden />
+        </span>
       </div>
       <div
         className={cn(
-          'min-w-0 rounded-lg transition-colors',
-          flash ? 'bg-primary/10' : 'bg-transparent',
+          'min-w-0 rounded-xl transition-all duration-500',
+          flash ? 'bg-primary/15 shadow-[0_0_24px_-6px_hsl(var(--primary)/0.5)]' : 'bg-transparent',
         )}
       >
         <p className="truncate text-metadata uppercase tracking-wide text-subtle-foreground">
@@ -252,7 +352,12 @@ function LiveChallenge({
 
       <Scoreboard state={state} />
 
-      <Card>
+      <div key={position} className="animate-fade-up">
+      <Card className="overflow-hidden shadow-md">
+        <span
+          className="block h-1 bg-gradient-to-r from-primary via-accent-foreground to-primary"
+          aria-hidden
+        />
         <CardContent className="space-y-5 p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <h2 className="text-section-title text-foreground">{state.question.title}</h2>
@@ -300,13 +405,18 @@ function LiveChallenge({
                   ? 'Answer sent — waiting for the server…'
                   : 'Select an option, then submit.'}
             </p>
-            <Button onClick={submit} disabled={!selected || !canAnswer} className="w-full sm:w-auto">
+            <Button
+              onClick={submit}
+              disabled={!selected || !canAnswer}
+              className="btn-sheen w-full shadow-lg shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 disabled:hover:translate-y-0 disabled:hover:shadow-none sm:w-auto"
+            >
               {answerPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
-              {answerPending ? 'Submitting…' : 'Submit answer'}
+              {answerPending ? <span className="typing-dots">Submitting</span> : 'Submit answer'}
             </Button>
           </div>
         </CardContent>
       </Card>
+      </div>
 
       {timeUp ? (
         <div
@@ -435,27 +545,58 @@ function ResultPanel({
   const won =
     outcome === 'DRAW' ? null : outcome === 'PLAYER1_WIN' ? selfIsPlayer1 : !selfIsPlayer1;
 
+  const oppScore = selfIsPlayer1 ? data.player2.score : data.player1.score;
+  const best = Math.max(selfResult.score, oppScore, 1);
+  const ratingDelta = data.ratingChange.self ?? 0;
+
   return (
-    <Card>
-      <CardContent className="flex flex-col items-center gap-4 p-8 text-center">
-        <span
-          className={cn(
-            'flex size-14 items-center justify-center rounded-full',
-            won === true && 'bg-success/15 text-success',
-            won === false && 'bg-destructive/15 text-destructive',
-            won === null && 'bg-muted text-muted-foreground',
-          )}
-        >
+    <Card
+      className={cn(
+        'animate-scale-in overflow-hidden',
+        won === true && 'gradient-border shadow-xl shadow-success/15',
+        won === false && 'border-destructive/25',
+      )}
+    >
+      <CardContent className="relative flex flex-col items-center gap-4 overflow-hidden p-8 text-center">
+        <div className="aurora-field" aria-hidden>
+          <span
+            className={cn(
+              'aurora-orb left-[20%] top-[-70%] size-56',
+              won === true ? 'bg-success/20' : won === false ? 'bg-destructive/15' : 'bg-primary/20',
+            )}
+          />
+          <span className="aurora-orb right-[15%] top-[-50%] size-52 bg-primary/15 [animation-delay:-6s]" />
+        </div>
+        <span className="relative" aria-hidden>
           {won === true ? (
-            <Trophy className="size-7" aria-hidden />
-          ) : won === false ? (
-            <X className="size-7" aria-hidden />
-          ) : (
-            <Swords className="size-7" aria-hidden />
-          )}
+            <span className="conic-ring absolute -inset-2 rounded-full opacity-50 blur-[6px]" />
+          ) : null}
+          <span
+            className={cn(
+              'relative flex size-20 animate-pop items-center justify-center rounded-full border-2 shadow-xl',
+              won === true && 'border-gold/60 bg-gold/15 text-gold shadow-gold/30',
+              won === false && 'border-destructive/40 bg-destructive/15 text-destructive',
+              won === null && 'border-border bg-muted text-muted-foreground',
+            )}
+          >
+            {won === true ? (
+              <Trophy className="size-9" aria-hidden />
+            ) : won === false ? (
+              <X className="size-9" aria-hidden />
+            ) : (
+              <Swords className="size-9" aria-hidden />
+            )}
+          </span>
         </span>
-        <div>
-          <h2 className="text-page-title text-foreground">
+        <div className="relative">
+          <h2
+            className={cn(
+              'text-4xl font-extrabold tracking-tight sm:text-5xl',
+              won === true && 'gradient-text-gold',
+              won === false && 'text-foreground',
+              won === null && 'text-foreground',
+            )}
+          >
             {won === true ? 'Victory' : won === false ? 'Defeat' : 'Draw'}
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -463,39 +604,53 @@ function ResultPanel({
           </p>
         </div>
 
-        <div className="grid w-full max-w-md grid-cols-1 gap-3 min-[480px]:grid-cols-2">
-          <div className="rounded-xl border border-border bg-elevated p-4">
-            <p className="text-metadata uppercase tracking-wide text-subtle-foreground">You</p>
-            <p className="font-metric text-xl font-bold text-foreground sm:text-stat">{selfResult.score}</p>
-            <p className="text-xs text-muted-foreground">
-              {selfResult.correct}✓ {selfResult.wrong}✗ {selfResult.unanswered}–
-            </p>
-          </div>
-          <div className="rounded-xl border border-border bg-elevated p-4">
-            <p className="text-metadata uppercase tracking-wide text-subtle-foreground">
-              {state.opponent?.displayName ?? 'Opponent'}
-            </p>
-            <p className="font-metric text-xl font-bold text-foreground sm:text-stat">
-              {selfIsPlayer1 ? data.player2.score : data.player1.score}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {selfIsPlayer1 ? data.player2.correct : data.player1.correct}✓{' '}
-              {selfIsPlayer1 ? data.player2.wrong : data.player1.wrong}✗
-            </p>
-          </div>
+        <div className="relative w-full max-w-md space-y-2.5 rounded-2xl border border-border bg-card/70 p-4 backdrop-blur">
+          {[
+            { label: 'You', score: selfResult.score, correct: selfResult.correct, wrong: selfResult.wrong, highlight: true },
+            {
+              label: state.opponent?.displayName ?? 'Opponent',
+              score: oppScore,
+              correct: selfIsPlayer1 ? data.player2.correct : data.player1.correct,
+              wrong: selfIsPlayer1 ? data.player2.wrong : data.player1.wrong,
+              highlight: false,
+            },
+          ].map((row) => (
+            <div key={row.label} className="space-y-1">
+              <div className="flex items-baseline justify-between text-sm">
+                <span className="min-w-0 truncate font-semibold text-foreground">{row.label}</span>
+                <span className="font-metric text-base font-extrabold text-foreground">
+                  {row.score}
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    {row.correct}✓ {row.wrong}✗
+                  </span>
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted" aria-hidden>
+                <div
+                  className={cn(
+                    'h-full rounded-full transition-[width] duration-1000',
+                    row.highlight
+                      ? 'bg-gradient-to-r from-primary to-accent-foreground shadow-[0_0_12px_hsl(var(--primary)/0.6)]'
+                      : 'bg-muted-foreground/40',
+                  )}
+                  style={{ width: `${Math.max(4, Math.round((row.score / best) * 100))}%` }}
+                />
+              </div>
+            </div>
+          ))}
         </div>
         {data.ratingStatus === 'COMPLETED' && !data.isSolo ? (
-          <div className="flex w-full max-w-md flex-col items-center justify-center gap-3 rounded-xl border border-border bg-elevated p-4 sm:flex-row sm:gap-6">
+          <div className="relative flex w-full max-w-md flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-elevated p-5 sm:flex-row sm:gap-8">
             <div className="text-center">
               <p className="text-metadata uppercase tracking-wide text-subtle-foreground">
-                Your rating
+                Rating change
               </p>
               <p
                 className={cn(
-                  'font-metric text-stat',
-                  (data.ratingChange.self ?? 0) > 0
-                    ? 'text-success'
-                    : (data.ratingChange.self ?? 0) < 0
+                  'animate-pop font-metric text-4xl font-extrabold',
+                  ratingDelta > 0
+                    ? 'text-success drop-shadow-[0_0_16px_hsl(var(--success)/0.5)]'
+                    : ratingDelta < 0
                       ? 'text-destructive'
                       : 'text-foreground',
                 )}
@@ -507,11 +662,12 @@ function ResultPanel({
                     : data.ratingChange.self}
               </p>
             </div>
+            <span className="hidden h-12 w-px bg-border sm:block" aria-hidden />
             <div className="text-center">
               <p className="text-metadata uppercase tracking-wide text-subtle-foreground">
                 Opponent
               </p>
-              <p className="font-metric text-stat text-muted-foreground">
+              <p className="font-metric text-xl font-bold text-muted-foreground">
                 {data.ratingChange.opponent === null
                   ? '—'
                   : data.ratingChange.opponent > 0
@@ -554,7 +710,11 @@ function ResultPanel({
           </p>
         )}
 
-        <Button onClick={onPlayAgain}>
+        <Button
+          onClick={onPlayAgain}
+          size="lg"
+          className="btn-sheen relative shadow-xl shadow-primary/25 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-primary/30"
+        >
           <Swords aria-hidden />
           Play again
         </Button>
@@ -594,17 +754,26 @@ export function ChallengeArena(): React.JSX.Element {
 
   if (phase === 'searching') {
     return (
-      <Card>
-        <CardContent className="flex flex-col items-center gap-4 p-10 text-center">
-          <Loader2 className="size-8 animate-spin text-primary" aria-hidden />
-          <div>
+      <Card className="animate-scale-in overflow-hidden">
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        <CardContent className="relative flex flex-col items-center gap-4 overflow-hidden p-10 text-center">
+          <div className="aurora-field" aria-hidden>
+            <span className="aurora-orb left-[10%] top-[-60%] size-48 bg-primary/20" />
+            <span className="aurora-orb right-[5%] top-[20%] size-48 bg-primary/15 [animation-delay:-6s]" />
+          </div>
+          <span className="relative flex size-16 items-center justify-center rounded-full border border-primary/25 bg-primary/10 shadow-lg shadow-primary/20" aria-hidden>
+            <Swords className="size-7 text-primary" />
+          </span>
+          <div className="relative">
             <p className="text-section-title text-foreground">Finding an opponent…</p>
             <p className="mt-1 text-sm text-muted-foreground">
               Matching you with a player near your rating. If nobody joins shortly, a solo run
               starts automatically.
             </p>
           </div>
-          <Button variant="outline" onClick={challenge.cancelMatchmaking}>
+          <Button variant="outline" onClick={challenge.cancelMatchmaking} className="relative">
             Cancel search
           </Button>
         </CardContent>
@@ -649,14 +818,15 @@ export function ChallengeArena(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
+      <DuelHero />
       {!connected ? (
-        <p className="flex items-center gap-2 rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-          <TriangleAlert className="size-3.5" aria-hidden />
-          Connecting to the challenge server…
+        <p className="flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+          <TriangleAlert className="size-3.5 animate-pulse-soft" aria-hidden />
+          <span className="typing-dots">Connecting to the challenge server</span>
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p role="alert" className="animate-fade-in rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error.message}
         </p>
       ) : null}
@@ -692,49 +862,85 @@ function CountdownPanel({
   const minutes = Math.max(1, Math.round((state?.config.durationSeconds ?? 120) / 60));
   const hydrating = !state;
 
+  const opponentInitial = opponentName.trim().charAt(0).toUpperCase() || '?';
   return (
-    <Card>
-      <CardContent className="flex flex-col items-center gap-4 p-6 text-center sm:p-10">
-        <Badge variant="success">
+    <Card className="animate-scale-in gradient-border overflow-hidden shadow-xl shadow-primary/15">
+      <CardContent className="relative flex flex-col items-center gap-4 overflow-hidden p-6 text-center sm:p-10">
+        <div className="aurora-field" aria-hidden>
+          <span className="aurora-orb left-[15%] top-[-70%] size-56 bg-primary/25" />
+          <span className="aurora-orb right-[10%] top-[-30%] size-52 bg-primary/15 [animation-delay:-6s]" />
+          <span className="dot-grid absolute inset-0 opacity-50" />
+        </div>
+        <Badge variant="success" className="relative flex items-center gap-1.5 shadow-lg shadow-success/25">
           <Check className="size-3" aria-hidden />
           {isSolo ? 'Solo run ready' : 'Opponent found'}
         </Badge>
-        <p className="text-section-title text-foreground">
-          {opponentName}
-          <span className="font-metric ml-2 text-muted-foreground">{opponentRating}</span>
-        </p>
-        <div className="flex h-24 items-center justify-center sm:h-28" aria-live="polite">
+        <div className="relative flex w-full max-w-sm items-center gap-3">
+          <div className="flex min-w-0 flex-1 flex-col items-center gap-1.5 rounded-2xl border border-border bg-card/80 p-3 backdrop-blur">
+            <span className="flex size-11 items-center justify-center rounded-full bg-gradient-to-br from-primary/25 to-accent/60 font-metric text-lg font-extrabold text-primary" aria-hidden>
+              {opponentInitial}
+            </span>
+            <p className="w-full truncate text-sm font-bold text-foreground">{opponentName}</p>
+            <span className="rounded-full bg-muted/70 px-2 py-0.5 font-metric text-xs font-semibold text-muted-foreground">
+              {opponentRating} rated
+            </span>
+          </div>
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary font-metric text-xs font-extrabold text-primary-foreground shadow-lg shadow-primary/40" aria-hidden>
+            VS
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col items-center gap-1.5 rounded-2xl border border-primary/40 bg-primary/[0.07] p-3 backdrop-blur">
+            <span className="flex size-11 items-center justify-center rounded-full bg-gradient-to-br from-primary to-accent-foreground font-metric text-lg font-extrabold text-white shadow-md shadow-primary/30" aria-hidden>
+              You
+            </span>
+            <p className="w-full truncate text-sm font-bold text-foreground">You</p>
+            <span className="rounded-full bg-primary/15 px-2 py-0.5 font-metric text-xs font-bold text-primary">
+              locked in
+            </span>
+          </div>
+        </div>
+        <div className="relative flex h-28 items-center justify-center sm:h-32" aria-live="polite">
+          <span className="conic-ring absolute size-28 rounded-full opacity-25 blur-md sm:size-32" aria-hidden />
           {display > 0 ? (
             <span
               key={display}
-              className="font-metric inline-block text-5xl font-extrabold tabular-nums text-primary animate-[countdown-pop_0.9s_ease-out] sm:text-7xl"
+              className="gradient-text font-metric relative inline-block text-7xl font-extrabold tabular-nums animate-[countdown-pop_0.9s_ease-out] sm:text-8xl"
             >
               {display}
             </span>
           ) : hydrating ? (
-            <span className="flex items-center gap-3 text-xl font-semibold text-muted-foreground">
+            <span className="relative flex items-center gap-3 text-xl font-semibold text-muted-foreground">
               <Loader2 className="size-8 animate-spin text-primary" aria-hidden />
               Starting…
             </span>
           ) : (
             <span
               key="go"
-              className="font-metric inline-block text-5xl font-extrabold text-primary animate-[countdown-pop_0.9s_ease-out] sm:text-7xl"
+              className="gradient-text font-metric relative inline-block text-7xl font-extrabold animate-[countdown-pop_0.9s_ease-out] sm:text-8xl"
             >
               GO!
             </span>
           )}
         </div>
-        <Progress
-          value={display > 0 ? ((total - display + 1) / (total + 1)) * 100 : 100}
-          className="w-full max-w-xs"
-        />
-        <p className="text-sm text-muted-foreground">
-          Endless questions · {minutes} {minutes === 1 ? 'minute' : 'minutes'} · +1 correct / −1
-          wrong{isSolo ? ' · unrated solo' : ''}
+        <div className="relative w-full max-w-xs space-y-2">
+          <Progress
+            value={display > 0 ? ((total - display + 1) / (total + 1)) * 100 : 100}
+            className="w-full shadow-[0_0_20px_-6px_hsl(var(--primary)/0.6)]"
+          />
+          <div className="loading-rail h-1" aria-hidden>
+            <span />
+          </div>
+        </div>
+        <p className="relative text-sm text-muted-foreground">
+          Endless questions · {minutes} {minutes === 1 ? 'minute' : 'minutes'} ·{' '}
+          <span aria-hidden>
+            <span className="font-semibold text-success">+1</span> correct /{' '}
+            <span className="font-semibold text-destructive">−1</span> wrong
+          </span>
+          <span className="sr-only">+1 correct / −1 wrong</span>
+          {isSolo ? ' · unrated solo' : ''}
         </p>
         {hydrating ? (
-          <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
+          <p className="relative flex items-center gap-2 text-xs text-muted-foreground" role="status">
             <Loader2 className="size-3.5 animate-spin" aria-hidden />
             Preparing your questions — the game starts on time regardless.
           </p>
@@ -818,60 +1024,102 @@ export function ChallengeHistorySection(): React.JSX.Element {
       ) : null}
 
       {stats.isPending ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" aria-busy="true" aria-label="Loading stats">
           {[0, 1, 2, 3].map((index) => (
-            <Skeleton key={index} className="h-20 rounded-xl" />
+            <Card key={index} className="animate-fade-up overflow-hidden" style={{ animationDelay: `${index * 70}ms` }} aria-hidden>
+              <CardContent className="space-y-2 p-4 text-center">
+                <div className="skeleton-shine mx-auto h-3 w-16 rounded-md" />
+                <div className="skeleton-shine mx-auto h-7 w-20 rounded-lg" />
+              </CardContent>
+            </Card>
           ))}
         </div>
       ) : stats.isError || !stats.data ? (
         <ErrorState title="Could not load stats" onRetry={() => void stats.refetch()} />
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Card>
-            <CardContent className="p-4 text-center">
-              <p className="text-metadata uppercase tracking-wide text-subtle-foreground">
-                Matches
-              </p>
-              <p className="font-metric text-stat text-foreground">{stats.data.matches}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 text-center">
-              <p className="text-metadata uppercase tracking-wide text-subtle-foreground">
-                W · L · D
-              </p>
-              <p className="font-metric text-stat text-foreground">
-                {stats.data.wins} · {stats.data.losses} · {stats.data.draws}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                <span className="font-metric">{stats.data.winRate}%</span> win rate
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 text-center">
-              <p className="text-metadata uppercase tracking-wide text-subtle-foreground">
-                Best score
-              </p>
-              <p className="font-metric text-stat text-foreground">{stats.data.bestScore ?? '—'}</p>
-              <p className="text-xs text-muted-foreground">
-                avg <span className="font-metric">{stats.data.avgScore ?? '—'}</span>
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 text-center">
-              <p className="text-metadata uppercase tracking-wide text-subtle-foreground">
-                Answers
-              </p>
-              <p className="font-metric text-stat text-foreground">
-                <span className="text-success">{stats.data.totalCorrect}✓</span>{' '}
-                <span className="text-destructive">{stats.data.totalWrong}✗</span>
-              </p>
-            </CardContent>
-          </Card>
+          {[
+            {
+              label: 'Matches',
+              body: <p className="font-metric text-stat text-foreground">{stats.data.matches}</p>,
+              wash: 'from-primary/15 to-transparent',
+            },
+            {
+              label: 'W · L · D',
+              body: (
+                <>
+                  <p className="font-metric text-stat text-foreground">
+                    {stats.data.wins} · {stats.data.losses} · {stats.data.draws}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-metric">{stats.data.winRate}%</span> win rate
+                  </p>
+                </>
+              ),
+              wash: 'from-success/15 to-transparent',
+            },
+            {
+              label: 'Best score',
+              body: (
+                <>
+                  <p className="gradient-text-gold font-metric text-stat font-extrabold">{stats.data.bestScore ?? '—'}</p>
+                  <p className="text-xs text-muted-foreground">
+                    avg <span className="font-metric">{stats.data.avgScore ?? '—'}</span>
+                  </p>
+                </>
+              ),
+              wash: 'from-gold/15 to-transparent',
+            },
+            {
+              label: 'Answers',
+              body: (
+                <p className="font-metric text-stat text-foreground">
+                  <span className="text-success">{stats.data.totalCorrect}✓</span>{' '}
+                  <span className="text-destructive">{stats.data.totalWrong}✗</span>
+                </p>
+              ),
+              wash: 'from-primary/10 to-transparent',
+            },
+          ].map((stat, index) => (
+            <Card
+              key={stat.label}
+              className="card-lift animate-fade-up relative overflow-hidden"
+              style={{ animationDelay: `${index * 70}ms` }}
+            >
+              <div className={`absolute inset-0 bg-gradient-to-br ${stat.wash}`} aria-hidden />
+              <CardContent className="relative space-y-1 p-4 text-center">
+                <p className="text-metadata uppercase tracking-wide text-subtle-foreground">
+                  {stat.label}
+                </p>
+                {stat.body}
+              </CardContent>
+            </Card>
+          ))}
         </div>
       )}
+      {!stats.isPending && !stats.isError && stats.data && stats.data.matches > 0 ? (
+        <div className="animate-fade-in space-y-1.5 rounded-2xl border border-border bg-card p-4" aria-label="Win loss record">
+          <div className="flex h-2.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+            <span
+              className="bg-success transition-[width] duration-1000"
+              style={{ width: `${(stats.data.wins / stats.data.matches) * 100}%` }}
+            />
+            <span
+              className="bg-muted-foreground/50 transition-[width] duration-1000"
+              style={{ width: `${(stats.data.draws / stats.data.matches) * 100}%` }}
+            />
+            <span
+              className="bg-destructive/70 transition-[width] duration-1000"
+              style={{ width: `${(stats.data.losses / stats.data.matches) * 100}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span><span className="font-metric font-bold text-success">{stats.data.wins}</span> won</span>
+            <span><span className="font-metric font-bold">{stats.data.draws}</span> drawn</span>
+            <span><span className="font-metric font-bold text-destructive">{stats.data.losses}</span> lost</span>
+          </div>
+        </div>
+      ) : null}
 
       {history.isPending ? (
         <LoadingState title="Loading match history…" />
@@ -895,9 +1143,13 @@ export function ChallengeHistorySection(): React.JSX.Element {
             {history.isFetching ? ' · updating…' : ''}
           </p>
           <ul className="space-y-2">
-            {history.data.items.map((entry) => (
-              <li key={entry.id}>
-                <Card>
+            {history.data.items.map((entry, index) => (
+              <li
+                key={entry.id}
+                className="row-enter"
+                style={{ animationDelay: `${Math.min(index, 6) * 50}ms` }}
+              >
+                <Card className="card-lift">
                   <CardContent className="flex flex-wrap items-center gap-3 p-4">
                     <Badge variant={RESULT_TONE[entry.result]}>{entry.result}</Badge>
                     <div className="min-w-0 flex-1">

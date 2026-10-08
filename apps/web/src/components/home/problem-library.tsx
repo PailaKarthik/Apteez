@@ -7,12 +7,24 @@ import { toast } from 'sonner';
 import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { CursorPage, ProblemSummaryDto } from '@apteez/types';
 import { difficultyForRating } from '@apteez/types';
-import { Badge, Button, EmptyState, ErrorState, SearchInput, Skeleton, cn } from '@apteez/ui';
+import {
+  Badge,
+  Button,
+  EmptyState,
+  ErrorState,
+  SearchInput,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  cn,
+} from '@apteez/ui';
 import { ApiError } from '@/lib/api-client';
 import { useAuth } from '@/hooks/use-auth';
 import { useFavoriteToggle } from '@/hooks/use-favorites';
 import { useProblemsCount, type LibraryFilters } from '@/hooks/use-home';
-import { useProblemsFeed } from '@/hooks/use-problems';
+import { useCategories, useExamTags, useProblemsFeed } from '@/hooks/use-problems';
 
 const PAGE_SIZE = 12;
 
@@ -27,6 +39,13 @@ const SOLVED_FILTERS = [
   { value: 'ALL', label: 'All' },
   { value: 'SOLVED', label: 'Solved' },
   { value: 'UNSOLVED', label: 'Unsolved' },
+] as const;
+
+const SORT_OPTIONS = [
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'rating_desc', label: 'Hardest rated' },
+  { value: 'rating_asc', label: 'Easiest rated' },
 ] as const;
 
 const DIFFICULTY_TONE = { EASY: 'success', MEDIUM: 'warning', HARD: 'destructive' } as const;
@@ -48,27 +67,27 @@ function LibrarySkeletonRows({ rows = 8 }: { rows?: number }): React.JSX.Element
   return (
     <>
       {Array.from({ length: rows }, (_, index) => (
-        <tr key={index} className="border-b border-border last:border-0" aria-hidden>
+        <tr key={index} className="animate-fade-in border-b border-border last:border-0" aria-hidden>
           <td className="px-3 py-3">
-            <Skeleton className="size-4 rounded-full" />
+            <div className="skeleton-shine size-4 rounded-full" />
           </td>
           <td className="px-3 py-3">
-            <Skeleton className="h-4 w-48 max-w-full" />
+            <div className="skeleton-shine h-4 w-48 max-w-full rounded-md" />
           </td>
           <td className="hidden px-3 py-3 sm:table-cell">
-            <Skeleton className="h-4 w-24" />
+            <div className="skeleton-shine h-4 w-24 rounded-md" />
           </td>
           <td className="hidden px-3 py-3 text-right md:table-cell">
-            <Skeleton className="ml-auto h-4 w-12" />
+            <div className="skeleton-shine ml-auto h-4 w-12 rounded-md" />
           </td>
           <td className="hidden px-3 py-3 text-right md:table-cell">
-            <Skeleton className="ml-auto h-4 w-10" />
+            <div className="skeleton-shine ml-auto h-4 w-10 rounded-md" />
           </td>
           <td className="px-3 py-3">
-            <Skeleton className="h-5 w-16 rounded-full" />
+            <div className="skeleton-shine h-5 w-16 rounded-full" />
           </td>
           <td className="px-3 py-3 text-right">
-            <Skeleton className="ml-auto size-4 rounded-full" />
+            <div className="skeleton-shine ml-auto size-4 rounded-full" />
           </td>
         </tr>
       ))}
@@ -89,7 +108,14 @@ export function ProblemLibrary(): React.JSX.Element {
   const [difficulty, setDifficulty] =
     React.useState<(typeof DIFFICULTY_FILTERS)[number]['value']>('ALL');
   const [solved, setSolved] = React.useState<(typeof SOLVED_FILTERS)[number]['value']>('ALL');
+  const [category, setCategory] = React.useState('all');
+  const [exam, setExam] = React.useState('all');
+  const [sort, setSort] =
+    React.useState<(typeof SORT_OPTIONS)[number]['value']>('newest');
   const [debouncedSearch, setDebouncedSearch] = React.useState('');
+
+  const { data: categories } = useCategories();
+  const { data: examTags } = useExamTags();
 
   React.useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
@@ -101,12 +127,32 @@ export function ProblemLibrary(): React.JSX.Element {
       ...(debouncedSearch ? { search: debouncedSearch } : {}),
       ...(difficulty !== 'ALL' ? { difficulty } : {}),
       ...(isAuthenticated && solved !== 'ALL' ? { solved: solved === 'SOLVED' } : {}),
+      ...(category !== 'all' ? { category } : {}),
+      ...(exam !== 'all' ? { exam } : {}),
     }),
-    [debouncedSearch, difficulty, solved, isAuthenticated],
+    [debouncedSearch, difficulty, solved, isAuthenticated, category, exam],
   );
 
-  const feed = useProblemsFeed({ ...filters, sort: 'newest' }, PAGE_SIZE);
+  const feed = useProblemsFeed({ ...filters, sort }, PAGE_SIZE);
   const count = useProblemsCount(filters);
+
+  const activeFilterCount =
+    (debouncedSearch ? 1 : 0) +
+    (difficulty !== 'ALL' ? 1 : 0) +
+    (isAuthenticated && solved !== 'ALL' ? 1 : 0) +
+    (category !== 'all' ? 1 : 0) +
+    (exam !== 'all' ? 1 : 0) +
+    (sort !== 'newest' ? 1 : 0);
+
+  const resetFilters = React.useCallback(() => {
+    setSearch('');
+    setDebouncedSearch('');
+    setDifficulty('ALL');
+    setSolved('ALL');
+    setCategory('all');
+    setExam('all');
+    setSort('newest');
+  }, []);
   const favoriteToggle = useFavoriteToggle();
   const queryClient = useQueryClient();
 
@@ -192,70 +238,157 @@ export function ProblemLibrary(): React.JSX.Element {
 
   return (
     <section aria-label="Problem library" className="space-y-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-lg font-bold tracking-tight text-foreground">Problem Library</h2>
-        <div className="text-sm text-muted-foreground" aria-live="polite">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="icon-tile size-10" aria-hidden>
+            <span className="text-base font-extrabold">Q</span>
+          </span>
+          <div>
+            <h2 className="text-lg font-bold tracking-tight text-foreground">Problem Library</h2>
+            <span
+              className="block h-0.5 w-10 rounded-full bg-gradient-to-r from-primary to-accent-foreground"
+              aria-hidden
+            />
+          </div>
+        </div>
+        <div
+          className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/[0.07] px-3 py-1 text-sm text-muted-foreground"
+          aria-live="polite"
+        >
           {count.isPending ? (
-            <Skeleton className="inline-block h-4 w-20 align-middle" />
+            <span className="typing-dots text-xs font-medium">Counting</span>
           ) : count.isError ? (
             'Count unavailable'
           ) : (
-            `${(total ?? 0).toLocaleString()} ${(total ?? 0) === 1 ? 'problem' : 'problems'}`
+            <span className="gradient-text-cool font-metric font-bold">
+              {`${(total ?? 0).toLocaleString()} ${(total ?? 0) === 1 ? 'problem' : 'problems'}`}
+            </span>
           )}
         </div>
       </div>
 
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-        <div className="min-w-0 flex-1">
-          <SearchInput
-            label="Search problems"
-            placeholder="Search problems…"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </div>
-        <div
-          className="flex flex-wrap items-center gap-1.5"
-          role="group"
-          aria-label="Difficulty filter"
-        >
-          {DIFFICULTY_FILTERS.map((option) => (
-            <Button
-              key={option.value}
-              size="sm"
-              variant={difficulty === option.value ? 'default' : 'outline'}
-              onClick={() => setDifficulty(option.value)}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
-        {isAuthenticated ? (
+      <div className="glass sticky top-top-bar z-10 space-y-2.5 rounded-2xl border border-border p-3 shadow-sm">
+        <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center">
+          <div className="min-w-0 flex-1">
+            <SearchInput
+              label="Search problems"
+              placeholder="Search problems… try “probability”, “trains”…"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
           <div
             className="flex flex-wrap items-center gap-1.5"
             role="group"
-            aria-label="Solved filter"
+            aria-label="Difficulty filter"
           >
-            {SOLVED_FILTERS.map((option) => (
+            {DIFFICULTY_FILTERS.map((option) => (
               <Button
                 key={option.value}
                 size="sm"
-                variant={solved === option.value ? 'default' : 'outline'}
-                onClick={() => setSolved(option.value)}
+                variant={difficulty === option.value ? 'default' : 'outline'}
+                onClick={() => setDifficulty(option.value)}
+                className={cn(
+                  'transition-all duration-200',
+                  difficulty === option.value && 'shadow-md shadow-primary/25',
+                )}
               >
                 {option.label}
               </Button>
             ))}
           </div>
-        ) : null}
+          {isAuthenticated ? (
+            <div
+              className="flex flex-wrap items-center gap-1.5"
+              role="group"
+              aria-label="Solved filter"
+            >
+              {SOLVED_FILTERS.map((option) => (
+                <Button
+                  key={option.value}
+                  size="sm"
+                  variant={solved === option.value ? 'default' : 'outline'}
+                  onClick={() => setSolved(option.value)}
+                  className={cn(
+                    'transition-all duration-200',
+                    solved === option.value && 'shadow-md shadow-primary/25',
+                  )}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="grid flex-1 grid-cols-1 gap-2 min-[480px]:grid-cols-3">
+            <Select value={category} onValueChange={setCategory}>
+              <SelectTrigger aria-label="Section filter" className="w-full">
+                <SelectValue placeholder="All sections" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All sections</SelectItem>
+                {(categories ?? []).map((item) => (
+                  <SelectItem key={item.slug} value={item.slug}>
+                    {item.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={exam} onValueChange={setExam}>
+              <SelectTrigger aria-label="Exam folder filter" className="w-full">
+                <SelectValue placeholder="All exams" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All exams</SelectItem>
+                {(examTags ?? []).map((item) => (
+                  <SelectItem key={item.slug} value={item.slug}>
+                    {item.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={sort}
+              onValueChange={(value) => setSort(value as typeof sort)}
+            >
+              <SelectTrigger aria-label="Sort order" className="w-full">
+                <SelectValue placeholder="Sort" />
+              </SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {activeFilterCount > 0 ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetFilters}
+              className="shrink-0 gap-1.5 text-muted-foreground transition-all hover:text-destructive"
+            >
+              Reset
+              <span className="rounded-full bg-primary/15 px-1.5 py-0.5 font-metric text-[11px] font-bold text-primary">
+                {activeFilterCount}
+              </span>
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       {feed.isPending ? (
         <div
-          className="overflow-x-auto rounded-xl border border-border"
+          className="animate-fade-in overflow-x-auto rounded-2xl border border-border"
           aria-busy="true"
           aria-label="Loading problems"
         >
+          <div className="loading-rail h-1" aria-hidden>
+            <span />
+          </div>
           <table className="w-full min-w-[760px] text-left text-sm">
             <tbody>
               <LibrarySkeletonRows />
@@ -278,7 +411,7 @@ export function ProblemLibrary(): React.JSX.Element {
           description="Try widening the difficulty, clearing the search term or picking All instead of Solved."
         />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-border">
+        <div className="animate-scale-in overflow-x-auto rounded-2xl border border-border shadow-sm">
           <table className="w-full min-w-[760px] text-left text-sm">
             <thead>
               <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
@@ -309,7 +442,8 @@ export function ProblemLibrary(): React.JSX.Element {
               {problems.map((problem, index) => (
                 <tr
                   key={problem.id}
-                  className="border-b border-border last:border-0 hover:bg-muted/40"
+                  className="row-enter row-glow border-b border-border last:border-0"
+                  style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
                 >
                   <td className="px-3 py-2.5 align-middle">
                     {problem.isSolved ? (
@@ -323,9 +457,11 @@ export function ProblemLibrary(): React.JSX.Element {
                   <td className="max-w-xs px-3 py-2.5">
                     <Link
                       href={`/problems/${problem.id}`}
-                      className="block truncate font-medium text-foreground hover:text-primary hover:underline"
+                      className="group/link block truncate font-medium text-foreground transition-colors hover:text-primary"
                     >
-                      {problem.title}
+                      <span className="bg-gradient-to-r from-primary to-primary bg-[length:0%_2px] bg-left-bottom bg-no-repeat transition-[background-size] duration-300 group-hover/link:bg-[length:100%_2px]">
+                        {problem.title}
+                      </span>
                     </Link>
                     <span className="block truncate text-xs text-muted-foreground">
                       {problem.subtopic?.name ?? problem.category.name}
@@ -400,8 +536,13 @@ export function ProblemLibrary(): React.JSX.Element {
               variant="outline"
               onClick={() => void feed.fetchNextPage()}
               disabled={feed.isFetchingNextPage}
+              className="btn-sheen min-w-52 transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/15"
             >
-              {feed.isFetchingNextPage ? 'Loading more…' : 'Load more problems'}
+              {feed.isFetchingNextPage ? (
+                <span className="typing-dots">Loading more</span>
+              ) : (
+                'Load more problems'
+              )}
             </Button>
           ) : (
             <p className="text-center text-xs text-muted-foreground">

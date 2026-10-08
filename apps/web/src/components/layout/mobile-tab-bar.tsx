@@ -25,7 +25,7 @@ export function MobileTabBar({ className }: { className?: string }): React.JSX.E
     <nav
       aria-label="Primary"
       className={cn(
-        'fixed inset-x-0 bottom-0 z-30 border-t border-border bg-elevated/95 backdrop-blur supports-[backdrop-filter]:bg-elevated/85',
+        'fixed inset-x-0 bottom-0 z-30 border-t border-border/70 bg-elevated/90 shadow-[0_-12px_40px_-18px_hsl(var(--primary)/0.4)] backdrop-blur-xl supports-[backdrop-filter]:bg-elevated/80',
         className,
       )}
     >
@@ -39,17 +39,22 @@ export function MobileTabBar({ className }: { className?: string }): React.JSX.E
                 href={item.href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'flex min-h-14 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors duration-fast',
-                  active ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
+                  'relative flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-[11px] font-medium transition-all duration-300 active:scale-95',
+                  active
+                    ? 'bg-primary/10 text-primary'
+                    : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                 )}
               >
                 <span className="relative flex size-7 items-center justify-center">
-                  <Icon className="size-5" aria-hidden />
+                  <Icon
+                    className={cn('size-5 transition-transform duration-300', active && 'scale-110')}
+                    aria-hidden
+                  />
                   <span
                     aria-hidden
                     className={cn(
-                      'absolute -bottom-1.5 h-1 w-1 rounded-full bg-primary transition-opacity duration-fast',
-                      active ? 'opacity-100' : 'opacity-0',
+                      'absolute -bottom-1.5 h-1 w-4 rounded-full bg-gradient-to-r from-primary to-accent-foreground transition-all duration-300',
+                      active ? 'opacity-100 scale-100' : 'opacity-0 scale-50',
                     )}
                   />
                 </span>

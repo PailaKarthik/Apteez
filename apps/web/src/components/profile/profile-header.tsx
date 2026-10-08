@@ -77,15 +77,24 @@ export function ProfileHeader({ profile }: { profile: ProfileDto }): React.JSX.E
   };
 
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
-        <div className="flex flex-col items-center gap-2">
-          <Avatar className="size-16">
-            {profile.avatarUrl ? (
-              <AvatarImage src={profile.avatarUrl} alt={profile.displayName} />
-            ) : null}
-            <AvatarFallback className="text-xl">{initial}</AvatarFallback>
-          </Avatar>
+    <Card className="animate-fade-up overflow-hidden">
+      <span className="block h-1.5 bg-gradient-to-r from-primary via-accent-foreground to-primary" aria-hidden />
+      <CardContent className="relative flex flex-col gap-4 overflow-hidden p-6 sm:flex-row sm:items-center">
+        <div className="aurora-field" aria-hidden>
+          <span className="aurora-orb -left-16 top-[-80%] size-56 bg-primary/15" />
+          <span className="aurora-orb right-[20%] top-[-60%] size-48 bg-primary/10 [animation-delay:-6s]" />
+        </div>
+        <div className="relative flex flex-col items-center gap-2">
+          <span className="rounded-full bg-gradient-to-br from-primary to-accent-foreground p-[3px] shadow-lg shadow-primary/30" aria-hidden>
+            <Avatar className="size-16 border-2 border-card">
+              {profile.avatarUrl ? (
+                <AvatarImage src={profile.avatarUrl} alt={profile.displayName} />
+              ) : null}
+              <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/60 text-xl font-extrabold text-primary">
+                {initial}
+              </AvatarFallback>
+            </Avatar>
+          </span>
           <input
             ref={fileRef}
             type="file"
@@ -105,9 +114,9 @@ export function ProfileHeader({ profile }: { profile: ProfileDto }): React.JSX.E
             {avatar.isPending ? 'Uploading…' : 'Change photo'}
           </Button>
         </div>
-        <div className="min-w-0 flex-1">
+        <div className="relative min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <CardTitle className="text-xl">{profile.displayName}</CardTitle>
+            <CardTitle className="gradient-text text-2xl font-extrabold">{profile.displayName}</CardTitle>
             {profile.isPrivate ? <Badge variant="outline">Private</Badge> : null}
           </div>
           <CardDescription className="mt-1">
@@ -119,7 +128,9 @@ export function ProfileHeader({ profile }: { profile: ProfileDto }): React.JSX.E
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button variant="outline">Edit profile</Button>
+            <Button variant="outline" className="relative shrink-0 transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/15">
+              Edit profile
+            </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
@@ -192,8 +203,12 @@ export function ProfileHeader({ profile }: { profile: ProfileDto }): React.JSX.E
                 />
                 Private profile (only you can view it)
               </label>
-              <Button className="w-full" disabled={update.isPending} onClick={onSave}>
-                {update.isPending ? 'Saving…' : 'Save changes'}
+              <Button
+                className="btn-sheen w-full"
+                disabled={update.isPending}
+                onClick={onSave}
+              >
+                {update.isPending ? <span className="typing-dots">Saving</span> : 'Save changes'}
               </Button>
             </div>
           </DialogContent>

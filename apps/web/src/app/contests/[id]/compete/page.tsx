@@ -12,7 +12,7 @@ import {
   CardTitle,
   EmptyState,
   ErrorState,
-  LoadingState,
+  Progress,
   cn,
 } from '@apteez/ui';
 import { PageHeader } from '@/components/shared/page-header';
@@ -134,7 +134,27 @@ export default function ContestCompetePage(): React.JSX.Element {
   }, [serverExpired]);
 
   if (session.isLoading) {
-    return <LoadingState title="Loading your contest session…" />;
+    return (
+      <div className="animate-fade-in space-y-4" aria-busy="true" aria-label="Loading your contest session">
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        <div className="overflow-hidden rounded-xl border border-border">
+          <div className="space-y-4 p-6">
+            <div className="flex items-center justify-between">
+              <div className="skeleton-shine h-6 w-32 rounded-full" />
+              <div className="skeleton-shine h-6 w-24 rounded-md" />
+            </div>
+            <div className="skeleton-shine h-7 w-3/4 rounded-lg" />
+            <div className="skeleton-shine h-28 w-full rounded-xl" />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="skeleton-shine h-12 rounded-lg" />
+              <div className="skeleton-shine h-12 rounded-lg" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
   if (session.isError || !data) {
     return (
@@ -195,22 +215,40 @@ export default function ContestCompetePage(): React.JSX.Element {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow={`Question ${data.currentPosition + 1} of ${data.totalQuestions}`}
         title={contest?.name ?? 'Contest'}
         description="Answer every question before the server clock runs out — correctness stays hidden until evaluation."
         actions={
-          <Badge variant={remaining <= 60 ? 'destructive' : 'secondary'} aria-live="polite">
-            <span className="font-metric">{formatCountdown(remaining)}</span>&nbsp;left
+          <Badge
+            variant={remaining <= 60 ? 'destructive' : 'secondary'}
+            aria-live="polite"
+            className={`flex items-center gap-1.5 px-3 py-1.5 font-metric text-sm shadow-lg ${remaining <= 60 ? 'animate-pulse-soft shadow-destructive/30' : 'shadow-primary/20'}`}
+          >
+            {remaining > 60 ? <span className="live-dot" aria-hidden /> : null}
+            <span className="tabular-nums text-base font-extrabold">{formatCountdown(remaining)}</span>
+            left
           </Badge>
         }
       />
+      <div className="space-y-1.5" aria-label="Contest progress">
+        <div className="flex justify-between text-xs text-muted-foreground">
+          <span>
+            <span className="gradient-text-cool font-metric font-bold">{data.answeredCount}</span>
+            {' '}/ {data.totalQuestions} answered
+          </span>
+          <span className="font-metric">{Math.round((data.answeredCount / Math.max(1, data.totalQuestions)) * 100)}%</span>
+        </div>
+        <Progress value={(data.answeredCount / Math.max(1, data.totalQuestions)) * 100} size="sm" aria-label="Answered progress" />
+      </div>
       <ContestLockdown
         contestId={id ?? ''}
         contestName={contest?.name ?? 'Contest'}
         participantLabel={user?.displayName || user?.username || user?.email || 'participant'}
       >
         <div className="grid gap-6 lg:grid-cols-3">
-          <div className="space-y-4 lg:col-span-2">
-            <Card>
+          <div className="space-y-4 lg:col-span-2" key={current.position}>
+            <Card className="animate-fade-up overflow-hidden shadow-md">
+              <span className="block h-1 bg-gradient-to-r from-primary to-accent-foreground" aria-hidden />
               <CardContent className="space-y-4 p-6">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="outline">
@@ -284,9 +322,12 @@ export default function ContestCompetePage(): React.JSX.Element {
             </Card>
           </div>
           <div className="space-y-4">
-            <Card>
+            <Card className="glass sticky top-top-bar shadow-sm">
               <CardContent className="space-y-3 p-6" id="contest-submit">
-                <CardTitle className="text-card-title">Navigator</CardTitle>
+                <CardTitle className="flex items-center gap-2 text-card-title">
+                  Navigator
+                  <span className="h-px flex-1 bg-gradient-to-r from-primary/40 to-transparent" aria-hidden />
+                </CardTitle>
                 {/* 44px targets (WCAG minimum); long contests scroll inside
                     instead of pushing submit below the fold. */}
                 <div
@@ -303,9 +344,9 @@ export default function ContestCompetePage(): React.JSX.Element {
                       aria-label={`Go to question ${item.position + 1}: ${item.state}`}
                       aria-current={item.state === 'current' ? 'true' : undefined}
                       className={cn(
-                        'flex min-h-11 min-w-11 items-center justify-center rounded-lg border text-sm transition-colors hover:border-primary/60 disabled:opacity-60',
+                        'flex min-h-11 min-w-11 items-center justify-center rounded-lg border text-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-md hover:shadow-primary/15 disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-none',
                         item.state === 'current'
-                          ? 'border-primary bg-primary/10 font-semibold text-primary'
+                          ? 'border-primary bg-primary/10 font-semibold text-primary shadow-[0_0_16px_-4px_hsl(var(--primary)/0.5)]'
                           : item.state === 'answered'
                             ? 'border-success/50 bg-success/10 text-foreground'
                             : item.state === 'review'
@@ -332,11 +373,20 @@ export default function ContestCompetePage(): React.JSX.Element {
                   </div>
                 </dl>
                 {!confirming ? (
-                  <Button className="w-full" onClick={() => setConfirming(true)}>
+                  <Button
+                    className="btn-sheen w-full shadow-lg shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5"
+                    onClick={() => setConfirming(true)}
+                  >
                     Review & submit
                   </Button>
                 ) : !preview.data ? (
-                  <LoadingState title="Checking your submission…" />
+                  <div className="space-y-2" aria-busy="true" aria-label="Checking your submission">
+                    <div className="loading-rail h-1" aria-hidden>
+                      <span />
+                    </div>
+                    <div className="skeleton-shine h-4 w-2/3 rounded-md" />
+                    <div className="skeleton-shine h-9 w-full rounded-lg" />
+                  </div>
                 ) : (
                   <div className="space-y-2 rounded-lg border border-border p-3 text-sm">
                     <p className="text-muted-foreground">

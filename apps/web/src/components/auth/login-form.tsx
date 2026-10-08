@@ -27,7 +27,6 @@ import { loginSchema, type LoginInput } from '@apteez/validation';
 import { ApiError, apiFetch } from '@/lib/api-client';
 import { AUTH_ME_QUERY_KEY, authErrorMessage, sanitizeNextPath, useAuth } from '@/hooks/use-auth';
 import { isStaffUser } from '@/hooks/use-admin';
-import { LoadingState } from '@apteez/ui';
 import { GoogleButton } from './google-button';
 
 const OAUTH_ERROR_COPY: Record<string, string> = {
@@ -94,16 +93,33 @@ export function LoginForm(): React.JSX.Element {
   });
 
   if (isLoading || isAuthenticated) {
-    return <LoadingState title="Checking your session…" />;
+    return (
+      <div className="mx-auto w-full max-w-md animate-fade-in space-y-4 py-8" aria-busy="true" aria-label="Checking your session">
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        <div className="rounded-2xl border border-border p-6">
+          <div className="skeleton-shine mx-auto h-7 w-40 rounded-lg" />
+          <div className="skeleton-shine mt-4 h-10 w-full rounded-lg" />
+          <div className="skeleton-shine mt-2 h-10 w-full rounded-lg" />
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="mx-auto w-full max-w-md space-y-6 py-8">
-      <div className="space-y-2 text-center">
-        <h1 className="text-2xl font-bold tracking-tight">Welcome back</h1>
+      <div className="page-enter space-y-2 text-center">
+        <p className="mx-auto inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/[0.07] px-3 py-1 text-xs font-semibold text-primary">
+          Your arena missed you
+        </p>
+        <h1 className="text-3xl font-extrabold tracking-tight">
+          Welcome <span className="gradient-text">back</span>
+        </h1>
         <p className="text-sm text-muted-foreground">Sign in to continue your preparation.</p>
       </div>
-      <Card>
+      <Card className="page-enter-1 overflow-hidden shadow-xl shadow-primary/10">
+        <span className="block h-1 bg-gradient-to-r from-primary via-accent-foreground to-primary" aria-hidden />
         <CardHeader>
           <CardTitle className="text-base">Sign in</CardTitle>
           <CardDescription>Use your ApteeZ email and password.</CardDescription>
@@ -168,8 +184,12 @@ export function LoginForm(): React.JSX.Element {
                   {formError}
                 </p>
               ) : null}
-              <Button type="submit" className="w-full" disabled={mutation.isPending}>
-                {mutation.isPending ? 'Signing in…' : 'Sign in'}
+              <Button
+                type="submit"
+                className="btn-sheen w-full shadow-lg shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 disabled:hover:translate-y-0 disabled:hover:shadow-none"
+                disabled={mutation.isPending}
+              >
+                {mutation.isPending ? <span className="typing-dots">Signing in</span> : 'Sign in'}
               </Button>
             </form>
           </Form>

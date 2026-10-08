@@ -131,14 +131,17 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
 
   if (problem.isPending) {
     return (
-      <Card>
+      <Card className="animate-fade-in overflow-hidden" aria-busy="true" aria-label="Loading problem">
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
         <CardContent className="space-y-4 p-6">
-          <div className="h-5 w-40 animate-pulse rounded bg-muted" />
-          <div className="h-7 w-2/3 animate-pulse rounded bg-muted" />
-          <div className="h-24 w-full animate-pulse rounded bg-muted" />
+          <div className="skeleton-shine h-5 w-40 rounded-md" />
+          <div className="skeleton-shine h-7 w-2/3 rounded-lg" />
+          <div className="skeleton-shine h-24 w-full rounded-xl" />
           <div className="grid gap-2 lg:grid-cols-2">
             {Array.from({ length: 4 }, (_, index) => (
-              <div key={index} className="h-14 animate-pulse rounded-xl bg-muted" />
+              <div key={index} className="skeleton-shine h-14 rounded-xl" />
             ))}
           </div>
         </CardContent>
@@ -164,12 +167,13 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
 
   return (
     <div className="space-y-5">
-      <Card>
+      <Card className="page-enter overflow-hidden">
+        <span className="block h-1 bg-gradient-to-r from-primary to-accent-foreground" aria-hidden />
         <CardContent className="space-y-5 p-6">
           <div className="flex flex-wrap items-center gap-2 text-metadata text-subtle-foreground">
             <Link
               href={`/explore?category=${data.category.slug}`}
-              className="transition-colors hover:text-foreground"
+              className="rounded-md px-1 py-0.5 transition-colors hover:bg-primary/10 hover:text-primary"
             >
               {data.category.name}
             </Link>
@@ -179,6 +183,10 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
                 <span>{data.topic.name}</span>
               </>
             ) : null}
+            <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/[0.06] px-2.5 py-0.5 font-metric text-muted-foreground" title="Problem rating">
+              <Sparkles className="size-3 text-primary" aria-hidden />
+              {data.rating}
+            </span>
           </div>
 
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -236,9 +244,9 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
               role="status"
               aria-live="polite"
               className={cn(
-                'flex items-start gap-3 rounded-xl border p-4',
+                'flex animate-pop items-start gap-3 rounded-xl border p-4',
                 isCorrect
-                  ? 'border-success/40 bg-success/10'
+                  ? 'border-success/40 bg-success/10 shadow-[0_0_32px_-12px_hsl(var(--success)/0.6)]'
                   : 'border-destructive/40 bg-destructive/10',
               )}
             >
@@ -278,6 +286,7 @@ export function PracticeView({ problemId }: { problemId: string }): React.JSX.El
               <Button
                 onClick={() => void handleSubmit()}
                 disabled={!selected || submitAttempt.isPending}
+                className="btn-sheen min-w-36 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/25 disabled:hover:translate-y-0 disabled:hover:shadow-none"
               >
                 {submitAttempt.isPending ? 'Checking…' : 'Submit answer'}
               </Button>

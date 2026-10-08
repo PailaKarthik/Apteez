@@ -18,11 +18,12 @@ import type {
 } from '@apteez/types';
 import { apiFetch } from '@/lib/api-client';
 
-export function useProfile() {
+export function useProfile(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['profile', 'me'],
     queryFn: () => apiFetch<ProfileDto>('/profile/me'),
     staleTime: 30_000,
+    enabled: options?.enabled ?? true,
   });
 }
 

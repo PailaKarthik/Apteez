@@ -95,6 +95,16 @@ export interface GroupedSearch {
   discussions: unknown[];
 }
 
+/**
+ * The search API occasionally returns a partial payload (a group missing or
+ * mistyped after a deploy skew). Every consumer maps/slices these lists, so
+ * they are normalized to real arrays here, once — a bad group degrades to
+ * empty instead of throwing `X.slice is not a function` mid-render.
+ */
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
 /** Grouped discovery preview across all types (no pagination). */
 export function useGroupedSearch(q: string, enabled = true) {
   return useQuery({
@@ -102,6 +112,15 @@ export function useGroupedSearch(q: string, enabled = true) {
     queryFn: () => apiFetch<GroupedSearch>(`/search?q=${encodeURIComponent(q)}&type=all`),
     enabled: enabled && q.trim().length > 0,
     staleTime: 30_000,
+    select: (raw) => ({
+      q: typeof raw?.q === 'string' ? raw.q : q,
+      problems: asArray<ProblemSummaryDto>(raw?.problems),
+      topics: asArray<{ slug: string; name: string }>(raw?.topics),
+      learning: asArray<unknown>(raw?.learning),
+      contests: asArray<unknown>(raw?.contests),
+      events: asArray<unknown>(raw?.events),
+      discussions: asArray<unknown>(raw?.discussions),
+    }),
   });
 }
 
@@ -111,6 +130,13 @@ export function useSearchSuggestions(q: string, enabled = true) {
     queryFn: () => apiFetch<SearchSuggestionsDto>(`/search/suggestions?q=${encodeURIComponent(q)}`),
     enabled: enabled && q.trim().length >= 2,
     staleTime: 60_000,
+    select: (raw) => ({
+      problems: asArray<{ id: string; title: string }>(raw?.problems),
+      topics: asArray<{ slug: string; name: string }>(raw?.topics),
+      contests: asArray<{ id: string; title: string }>(raw?.contests),
+      events: asArray<{ id: string; title: string }>(raw?.events),
+      discussions: asArray<{ id: string; title: string }>(raw?.discussions),
+    }),
   });
 }
 
@@ -120,6 +146,12 @@ export function useTrending(enabled = true) {
     queryFn: () => apiFetch<TrendingContentDto>('/search/trending'),
     enabled,
     staleTime: 5 * 60_000,
+    select: (raw) => ({
+      problems: asArray<ProblemSummaryDto>(raw?.problems),
+      contests: asArray<TrendingContentDto['contests']>(raw?.contests),
+      events: asArray<TrendingContentDto['events']>(raw?.events),
+      discussions: asArray<TrendingContentDto['discussions']>(raw?.discussions),
+    }),
   });
 }
 
@@ -139,6 +171,7 @@ export function useRecentSearches(enabled = true) {
     enabled,
     staleTime: 60_000,
     retry: false,
+    select: (raw) => ({ items: asArray<RecentSearchDto>(raw?.items) }),
   });
 }
 

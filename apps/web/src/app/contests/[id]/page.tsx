@@ -13,10 +13,10 @@ import {
   CardTitle,
   EmptyState,
   ErrorState,
-  LoadingState,
   Progress,
 } from '@apteez/ui';
-import { Settings2 } from 'lucide-react';
+import * as React from 'react';
+import { CalendarClock, ListChecks, Settings2, Timer, Users } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { ApiError } from '@/lib/api-client';
 import { useAdminAccess } from '@/hooks/use-admin';
@@ -36,6 +36,136 @@ function formatDateTime(iso: string | null): string {
     return '—';
   }
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function useNow(intervalMs = 1000): number {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(timer);
+  }, [intervalMs]);
+  return now;
+}
+
+function splitCountdown(targetMs: number, now: number): { d: number; h: number; m: number; s: number } {
+  const total = Math.max(0, Math.floor((targetMs - now) / 1000));
+  return {
+    d: Math.floor(total / 86400),
+    h: Math.floor((total % 86400) / 3600),
+    m: Math.floor((total % 3600) / 60),
+    s: total % 60,
+  };
+}
+
+/**
+ * Live countdown hero: ticks every second toward the start (upcoming) or
+ * the end (live), with capacity alongside. Pure display — the server owns
+ * every gate.
+ */
+function ContestCountdownHero({
+  phase,
+  startsAt,
+  endsAt,
+  participantCount,
+  maxParticipants,
+  capacityPct,
+}: {
+  phase: 'live' | 'upcoming' | 'past';
+  startsAt: string;
+  endsAt: string;
+  participantCount: number;
+  maxParticipants: number | null;
+  capacityPct: number | null;
+}): React.JSX.Element {
+  const now = useNow();
+  const target = phase === 'live' ? new Date(endsAt).getTime() : new Date(startsAt).getTime();
+  const { d, h, m, s } = splitCountdown(target, now);
+  const label = phase === 'live' ? 'Ends in' : phase === 'upcoming' ? 'Starts in' : 'Ended';
+  const units = [
+    { value: d, label: 'days' },
+    { value: h, label: 'hrs' },
+    { value: m, label: 'min' },
+    { value: s, label: 'sec' },
+  ];
+  return (
+    <div className="page-enter-1 relative overflow-hidden rounded-3xl border border-border">
+      <div
+        className={
+          phase === 'live'
+            ? 'absolute inset-0 bg-gradient-to-br from-success/[0.12] via-card to-card'
+            : 'absolute inset-0 bg-gradient-to-br from-primary/[0.13] via-card to-card'
+        }
+        aria-hidden
+      />
+      <div className="aurora-field" aria-hidden>
+        <span
+          className={
+            phase === 'live'
+              ? 'aurora-orb -left-12 -top-20 size-60 bg-success/20'
+              : 'aurora-orb -left-12 -top-20 size-60 bg-primary/25'
+          }
+        />
+        <span className="aurora-orb right-[10%] top-[-50%] size-52 bg-primary/15 [animation-delay:-6s]" />
+      </div>
+      <div className="relative flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-7">
+        <div className="space-y-3">
+          <p className="flex items-center gap-2 text-metadata uppercase tracking-[0.18em] text-primary">
+            {phase === 'live' ? <span className="live-dot" aria-hidden /> : null}
+            {label}
+          </p>
+          {phase === 'past' ? (
+            <p className="font-metric text-3xl font-extrabold text-foreground">Results are final</p>
+          ) : (
+            <div className="flex gap-2" role="timer" aria-label={label}>
+              {units.map((unit) => (
+                <span
+                  key={unit.label}
+                  className="glass flex min-w-16 flex-col items-center rounded-2xl border border-border px-3 py-2 shadow-sm"
+                >
+                  <span
+                    key={unit.value}
+                    className="font-metric inline-block text-2xl font-extrabold tabular-nums text-foreground animate-[countdown-pop_0.9s_ease-out] sm:text-3xl"
+                  >
+                    {String(unit.value).padStart(2, '0')}
+                  </span>
+                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                    {unit.label}
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="w-full max-w-xs space-y-2 rounded-2xl border border-border bg-card/70 p-4 backdrop-blur">
+          <div className="flex items-center justify-between text-sm">
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+              <Users className="size-4 text-primary" aria-hidden />
+              Registered
+            </span>
+            <span className="font-metric font-bold text-foreground">
+              {participantCount}
+              {maxParticipants !== null ? ` / ${maxParticipants}` : ''}
+            </span>
+          </div>
+          {capacityPct !== null ? (
+            <>
+              <Progress value={capacityPct} size="sm" aria-label="Registration capacity" />
+              <p className="text-xs text-muted-foreground">
+                <span className="font-metric font-semibold text-primary">{capacityPct}%</span> full
+                — seats go fast
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">Open registration — claim your seat.</p>
+          )}
+        </div>
+      </div>
+      <div
+        className={`relative h-1 bg-gradient-to-r ${phase === 'live' ? 'from-success to-success/40' : 'from-primary via-accent-foreground to-primary'}`}
+        aria-hidden
+      />
+    </div>
+  );
 }
 
 export default function ContestDetailPage(): React.JSX.Element {
@@ -67,7 +197,33 @@ export default function ContestDetailPage(): React.JSX.Element {
   );
 
   if (isLoading) {
-    return <LoadingState title="Loading contest…" />;
+    return (
+      <div className="animate-fade-in space-y-6" aria-busy="true" aria-label="Loading contest">
+        <div className="space-y-2">
+          <div className="skeleton-shine h-8 w-72 max-w-full rounded-lg" />
+          <div className="skeleton-shine h-4 w-96 max-w-full rounded-md" />
+        </div>
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+            <div className="rounded-xl border border-border p-6">
+              <div className="flex gap-2">
+                <div className="skeleton-shine h-6 w-20 rounded-full" />
+                <div className="skeleton-shine h-6 w-24 rounded-full" />
+              </div>
+              <div className="skeleton-shine mt-4 h-4 w-full rounded-md" />
+              <div className="skeleton-shine mt-2 h-4 w-5/6 rounded-md" />
+            </div>
+          </div>
+          <div className="rounded-xl border border-border p-6">
+            <div className="skeleton-shine h-5 w-32 rounded-md" />
+            <div className="skeleton-shine mt-3 h-10 w-full rounded-lg" />
+          </div>
+        </div>
+      </div>
+    );
   }
   if (isError || !contest) {
     return (
@@ -115,12 +271,25 @@ export default function ContestDetailPage(): React.JSX.Element {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow={contest.phase === 'live' ? 'Live now — ratings on the line' : `Contest · ${contest.phase}`}
         title={contest.name}
         description={`${contest.questionCount} questions · ${contest.durationMinutes} min · mixed levels`}
       />
+      <ContestCountdownHero
+        phase={contest.phase}
+        startsAt={contest.startsAt}
+        endsAt={contest.endsAt}
+        participantCount={contest.participantCount}
+        maxParticipants={contest.maxParticipants}
+        capacityPct={capacityPct}
+      />
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          <Card>
+        <div className="page-enter-1 space-y-6 lg:col-span-2">
+          <Card className="animate-fade-up overflow-hidden">
+            <span
+              className={`block h-1 bg-gradient-to-r ${contest.phase === 'live' ? 'from-success to-success/50' : 'from-primary to-accent-foreground'}`}
+              aria-hidden
+            />
             <CardContent className="space-y-4 p-6">
               <div className="flex flex-wrap gap-2">
                 <Badge
@@ -131,7 +300,9 @@ export default function ContestDetailPage(): React.JSX.Element {
                         ? 'secondary'
                         : 'warning'
                   }
+                  className="flex items-center gap-1.5"
                 >
+                  {contest.phase === 'live' ? <span className="live-dot" aria-hidden /> : null}
                   {contest.status.replace(/_/g, ' ')}
                 </Badge>
                 <Badge variant="outline" title="Every contest mixes easy, medium and hard problems">
@@ -149,44 +320,66 @@ export default function ContestDetailPage(): React.JSX.Element {
                 </CardDescription>
               ) : null}
               {contest.rules ? (
-                <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm leading-relaxed text-muted-foreground">
+                <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-4 text-sm leading-relaxed text-muted-foreground">
+                  <p className="mb-1 text-metadata font-semibold uppercase tracking-[0.14em] text-primary">
+                    Rules
+                  </p>
                   {contest.rules}
                 </div>
               ) : null}
-              <dl className="grid gap-2 text-sm sm:grid-cols-2">
-                <div>
-                  <dt className="text-muted-foreground">Starts</dt>
-                  <dd className="font-medium">{formatDateTime(contest.startsAt)}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Ends</dt>
-                  <dd className="font-medium">{formatDateTime(contest.endsAt)}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Registration closes</dt>
-                  <dd className="font-medium">{formatDateTime(contest.registrationClosesAt)}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Organizer</dt>
-                  <dd className="font-medium">{contest.organizer.displayName}</dd>
-                </div>
+              <dl className="grid grid-cols-2 gap-2.5">
+                {[
+                  { icon: CalendarClock, label: 'Starts', value: formatDateTime(contest.startsAt) },
+                  { icon: CalendarClock, label: 'Ends', value: formatDateTime(contest.endsAt) },
+                  { icon: Timer, label: 'Duration', value: `${contest.durationMinutes} min` },
+                  { icon: ListChecks, label: 'Questions', value: String(contest.questionCount) },
+                ].map((fact) => (
+                  <div
+                    key={fact.label}
+                    className="flex items-center gap-2.5 rounded-xl border border-border bg-card p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md hover:shadow-primary/10"
+                  >
+                    <span className="icon-tile size-9 shrink-0" aria-hidden>
+                      <fact.icon className="size-4" />
+                    </span>
+                    <span className="min-w-0">
+                      <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                        {fact.label}
+                      </dt>
+                      <dd className="truncate text-sm font-semibold text-foreground" title={fact.value}>
+                        {fact.value}
+                      </dd>
+                    </span>
+                  </div>
+                ))}
               </dl>
-              {capacityPct !== null ? (
-                <div className="space-y-1">
-                  <Progress value={capacityPct} aria-label="Registration capacity" />
-                  <p className="text-xs text-muted-foreground">{capacityPct}% full</p>
-                </div>
-              ) : null}
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
+                <span>
+                  Registration closes{' '}
+                  <span className="font-medium text-foreground">
+                    {formatDateTime(contest.registrationClosesAt)}
+                  </span>
+                </span>
+                <span>
+                  Organized by{' '}
+                  <span className="font-medium text-foreground">{contest.organizer.displayName}</span>
+                </span>
+              </div>
             </CardContent>
           </Card>
 
           {showStandings ? (
-            <Card>
+            <Card className="animate-fade-in">
               <CardContent className="space-y-3 p-6">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <CardTitle className="text-card-title">Standings</CardTitle>
+                  <CardTitle className="flex items-center gap-2 text-card-title">
+                    Standings
+                    <span className="h-px w-10 bg-gradient-to-r from-primary/40 to-transparent" aria-hidden />
+                  </CardTitle>
                   {contest?.phase === 'live' ? (
-                    <Badge variant="success">Live · auto-refreshes</Badge>
+                    <Badge variant="success" className="flex items-center gap-1.5">
+                      <span className="live-dot" aria-hidden />
+                      Live · auto-refreshes
+                    </Badge>
                   ) : null}
                 </div>
                 {result?.rank !== null && result?.rank !== undefined ? (
@@ -233,8 +426,8 @@ export default function ContestDetailPage(): React.JSX.Element {
                               aria-current={row.isCurrentUser ? 'true' : undefined}
                               className={
                                 row.isCurrentUser
-                                  ? 'border-b border-border bg-primary/10 last:border-0'
-                                  : 'border-b border-border last:border-0 hover:bg-muted/40'
+                                  ? 'border-b border-border bg-primary/10 shadow-[inset_2px_0_0_hsl(var(--primary))] last:border-0'
+                                  : 'row-glow border-b border-border last:border-0'
                               }
                             >
                               <td className="px-3 py-2 font-metric text-muted-foreground">
@@ -304,9 +497,11 @@ export default function ContestDetailPage(): React.JSX.Element {
           ) : null}
 
           {result ? (
-            <Card>
+            <Card className="animate-scale-in border-primary/30 shadow-lg shadow-primary/10">
               <CardContent className="space-y-3 p-6">
-                <CardTitle className="text-card-title">Your result</CardTitle>
+                <CardTitle className="flex items-center gap-2 text-card-title">
+                  <span className="gradient-text-cool">Your result</span>
+                </CardTitle>
                 <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                   <div>
                     <p className="text-muted-foreground">Solved</p>
@@ -357,12 +552,12 @@ export default function ContestDetailPage(): React.JSX.Element {
           ) : null}
         </div>
 
-        <div className="space-y-6">
+        <div className="page-enter-2 space-y-6">
           {canManage && contest ? (
-            <Card>
+            <Card className="card-lift">
               <CardContent className="space-y-3 p-6">
                 <CardTitle className="text-card-title">Organizer</CardTitle>
-                <Button className="w-full" variant="outline" asChild>
+                <Button className="w-full transition-all duration-300 hover:-translate-y-0.5" variant="outline" asChild>
                   <Link href={`/contests/${contest.id}/manage`}>
                     <Settings2 aria-hidden />
                     Manage contest
@@ -374,12 +569,17 @@ export default function ContestDetailPage(): React.JSX.Element {
               </CardContent>
             </Card>
           ) : null}
-          <Card>
+          <Card className="card-lift overflow-hidden">
+            <span className="block h-1 bg-gradient-to-r from-primary to-accent-foreground" aria-hidden />
             <CardContent className="space-y-3 p-6">
               <CardTitle className="text-card-title">Your entry</CardTitle>
               {canEnter ? (
-                <Button className="w-full" onClick={onEnter} disabled={start.isPending}>
-                  {start.isPending ? 'Entering…' : 'Enter contest'}
+                <Button
+                  className="btn-sheen w-full shadow-lg shadow-primary/25 transition-all duration-300 hover:-translate-y-0.5"
+                  onClick={onEnter}
+                  disabled={start.isPending}
+                >
+                  {start.isPending ? <span className="typing-dots">Entering</span> : 'Enter contest'}
                 </Button>
               ) : contest.isRegistered ? (
                 <Button
@@ -392,11 +592,11 @@ export default function ContestDetailPage(): React.JSX.Element {
                 </Button>
               ) : (
                 <Button
-                  className="w-full"
+                  className="btn-sheen w-full transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/25 disabled:hover:translate-y-0 disabled:hover:shadow-none"
                   onClick={onRegister}
                   disabled={register.isPending || !contest.registrationOpen}
                 >
-                  {register.isPending ? 'Registering…' : 'Register'}
+                  {register.isPending ? <span className="typing-dots">Registering</span> : 'Register'}
                 </Button>
               )}
               {!contest.registrationOpen && !contest.isRegistered ? (

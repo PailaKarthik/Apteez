@@ -9,6 +9,7 @@ export default function LeaderboardPage(): React.JSX.Element {
   return (
     <PageStack>
       <PageHeader
+        eyebrow="Rankings · Season live"
         title="Leaderboard"
         description="Contest rating plus challenge ratings across the 7 aptitude sections."
       />

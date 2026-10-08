@@ -11,7 +11,7 @@ export const metadata = pageMetadata(
 export default function ProfilePage(): React.JSX.Element {
   return (
     <div className="space-y-6">
-      <PageHeader title="Profile" description="Your identity, progress and saved questions." />
+      <PageHeader eyebrow="Your arena identity" title="Profile" description="Your identity, progress and saved questions." />
       <RequireAuth>
         <ProfileContent />
       </RequireAuth>

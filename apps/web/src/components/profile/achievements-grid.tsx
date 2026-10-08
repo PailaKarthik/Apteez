@@ -2,7 +2,7 @@
 
 import { Trophy } from 'lucide-react';
 import type { AchievementDto } from '@apteez/types';
-import { Badge, Card, CardContent, CardTitle, Skeleton, cn } from '@apteez/ui';
+import { Badge, Card, CardContent, CardTitle, cn } from '@apteez/ui';
 
 export function AchievementsGrid({
   items,
@@ -13,13 +13,17 @@ export function AchievementsGrid({
 }): React.JSX.Element {
   if (isLoading) {
     return (
-      <Card>
-        <CardContent className="space-y-3 p-6">
-          <Skeleton className="h-5 w-44" />
+      <Card className="animate-fade-in">
+        <CardContent className="space-y-3 p-6" aria-busy="true" aria-label="Loading achievements">
+          <div className="skeleton-shine h-5 w-44 rounded-md" />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <Skeleton className="h-24" />
-            <Skeleton className="h-24" />
-            <Skeleton className="h-24" />
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="space-y-2 rounded-xl border border-border p-4" aria-hidden>
+                <div className="skeleton-shine size-8 rounded-lg" />
+                <div className="skeleton-shine h-4 w-2/3 rounded-md" />
+                <div className="skeleton-shine h-3 w-1/3 rounded-md" />
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>
@@ -40,19 +44,29 @@ export function AchievementsGrid({
           <p className="text-sm text-muted-foreground">Achievements load with your profile.</p>
         ) : (
           <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {items.map((row) => (
+            {items.map((row, index) => (
               <li
                 key={row.id}
                 className={cn(
-                  'rounded-xl border p-4',
-                  row.isUnlocked ? 'border-gold/50 bg-gold/5' : 'border-border opacity-70',
+                  'row-enter rounded-xl border p-4 transition-all duration-300 hover:-translate-y-1',
+                  row.isUnlocked
+                    ? 'border-gold/50 bg-gold/5 shadow-[0_0_24px_-10px_hsl(var(--gold)/0.5)] hover:shadow-[0_12px_32px_-10px_hsl(var(--gold)/0.5)]'
+                    : 'border-border opacity-70 hover:opacity-100',
                 )}
+                style={{ animationDelay: `${Math.min(index, 8) * 50}ms` }}
               >
                 <div className="flex items-center gap-2">
-                  <Trophy
-                    className={cn('size-4', row.isUnlocked ? 'text-gold' : 'text-muted-foreground')}
+                  <span
+                    className={cn(
+                      'flex size-8 items-center justify-center rounded-lg',
+                      row.isUnlocked ? 'bg-gold/15' : 'bg-muted',
+                    )}
                     aria-hidden
-                  />
+                  >
+                    <Trophy
+                      className={cn('size-4', row.isUnlocked ? 'text-gold' : 'text-muted-foreground')}
+                    />
+                  </span>
                   <span className="text-sm font-semibold">{row.name}</span>
                 </div>
                 {row.description ? (

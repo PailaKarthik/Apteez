@@ -32,16 +32,21 @@ const DialogContent = React.forwardRef<
       ref={ref}
       className={cn(
         // Viewport-capped by default: at 360px the dialog never touches the
-        // screen edges and tall content scrolls inside instead of blowing
-        // out the page. Callers can still widen via className (max-w merge).
-        'fixed left-1/2 top-1/2 z-50 grid max-h-[90dvh] w-full max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-2xl border bg-popover p-6 shadow-lg duration-base data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg',
+        // screen edges. The outer shell never scrolls (note the forced
+        // `!overflow-hidden`, which wins over caller classes) — only the
+        // inner body scrolls, so the close button is always visible and
+        // tappable no matter how tall the content gets. Callers can still
+        // widen via className (max-w merge).
+        'fixed left-1/2 top-1/2 z-50 grid max-h-[90dvh] w-full max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 !overflow-hidden rounded-2xl border bg-popover shadow-lg duration-base data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg',
         className,
       )}
       {...props}
     >
-      {children}
+      <div className="grid max-h-[86dvh] gap-4 overflow-y-auto overscroll-contain p-6 sm:max-h-[82dvh]">
+        {children}
+      </div>
       <DialogPrimitive.Close
-        className="absolute right-4 top-4 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="absolute right-4 top-4 rounded-lg border border-border bg-card p-2 text-muted-foreground shadow-md transition-all duration-200 hover:rotate-90 hover:bg-accent hover:text-foreground hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label="Close dialog"
       >
         <X className="size-4" aria-hidden />

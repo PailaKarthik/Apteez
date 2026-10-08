@@ -22,7 +22,6 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Skeleton,
   cn,
 } from '@apteez/ui';
 import { useChallengeDomains } from '@/hooks/use-challenge';
@@ -67,16 +66,19 @@ function RankBadge({ rank }: { rank: number }): React.JSX.Element {
   );
 }
 
-function ChallengeRow({ entry }: { entry: RatingLeaderboardEntryDto }): React.JSX.Element {
+function ChallengeRow({ entry, index = 0 }: { entry: RatingLeaderboardEntryDto; index?: number }): React.JSX.Element {
   const initial = entry.displayName.trim().charAt(0).toUpperCase() || 'A';
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2.5 sm:gap-3">
+    <div
+      className="row-enter row-glow group flex items-center gap-2 rounded-lg border border-border px-3 py-2.5 sm:gap-3"
+      style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+    >
       <RankBadge rank={entry.rank} />
-      <Avatar className="size-9 border border-border">
+      <Avatar className="size-9 border border-border transition-all duration-300 group-hover:border-primary/50 group-hover:shadow-md group-hover:shadow-primary/20">
         <AvatarFallback className="text-xs font-semibold">{initial}</AvatarFallback>
       </Avatar>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">
+        <p className="truncate text-sm font-medium text-foreground transition-colors group-hover:text-primary">
           <ProfileName username={entry.username} displayName={entry.displayName} />
         </p>
         <p className="truncate text-xs text-muted-foreground">
@@ -101,16 +103,22 @@ function ChallengeRow({ entry }: { entry: RatingLeaderboardEntryDto }): React.JS
   );
 }
 
-function ContestRow({ entry }: { entry: ContestRatingLeaderboardEntryDto }): React.JSX.Element {
+function ContestRow({ entry, index = 0 }: { entry: ContestRatingLeaderboardEntryDto; index?: number }): React.JSX.Element {
   const initial = entry.displayName.trim().charAt(0).toUpperCase() || 'A';
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2.5 sm:gap-3">
+    <div
+      className={cn(
+        'row-enter row-glow group flex items-center gap-2 rounded-lg border px-3 py-2.5 sm:gap-3',
+        entry.rank === 1 ? 'border-gold/40 bg-gold/[0.04]' : 'border-border',
+      )}
+      style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+    >
       <RankBadge rank={entry.rank} />
-      <Avatar className="size-9 border border-border">
+      <Avatar className="size-9 border border-border transition-all duration-300 group-hover:border-primary/50 group-hover:shadow-md group-hover:shadow-primary/20">
         <AvatarFallback className="text-xs font-semibold">{initial}</AvatarFallback>
       </Avatar>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">
+        <p className="truncate text-sm font-medium text-foreground transition-colors group-hover:text-primary">
           <ProfileName username={entry.username} displayName={entry.displayName} />
         </p>
         <p className="truncate text-xs text-muted-foreground">
@@ -127,7 +135,7 @@ function ContestRow({ entry }: { entry: ContestRatingLeaderboardEntryDto }): Rea
       <Badge variant={TIER_TONE[entry.tier]} className="hidden shrink-0 sm:inline-flex">
         {RATING_TIER_LABELS[entry.tier]}
       </Badge>
-      <span className="font-metric w-12 shrink-0 text-right text-base font-bold text-foreground sm:w-14 sm:text-lg">
+      <span className={cn('font-metric w-12 shrink-0 text-right text-base font-bold sm:w-14 sm:text-lg', entry.rank === 1 ? 'gradient-text-gold' : 'text-foreground')}>
         {entry.rating}
       </span>
     </div>
@@ -136,25 +144,87 @@ function ContestRow({ entry }: { entry: ContestRatingLeaderboardEntryDto }): Rea
 
 function RowsSkeleton({ rows = 6 }: { rows?: number }): React.JSX.Element {
   return (
-    <Card>
+    <Card className="animate-fade-in overflow-hidden">
+      <div className="loading-rail h-1" aria-hidden>
+        <span />
+      </div>
       <CardContent className="grid gap-2 p-3" aria-busy="true" aria-label="Loading rankings">
         {Array.from({ length: rows }, (_, i) => (
           <div
             key={i}
-            className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5"
+            className="animate-fade-up flex items-center gap-3 rounded-lg border border-border px-3 py-2.5"
+            style={{ animationDelay: `${Math.min(i, 5) * 60}ms` }}
+            aria-hidden
           >
-            <Skeleton className="size-8 rounded-full" />
-            <Skeleton className="size-9 rounded-full" />
+            <div className="skeleton-shine size-8 rounded-full" />
+            <div className="skeleton-shine size-9 rounded-full" />
             <div className="flex-1 space-y-1.5">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-3 w-24" />
+              <div className="skeleton-shine h-4 w-32 rounded-md" />
+              <div className="skeleton-shine h-3 w-24 rounded-md" />
             </div>
-            <Skeleton className="h-5 w-16 rounded-full" />
-            <Skeleton className="h-6 w-14" />
+            <div className="skeleton-shine h-5 w-16 rounded-full" />
+            <div className="skeleton-shine h-6 w-14 rounded-md" />
           </div>
         ))}
       </CardContent>
     </Card>
+  );
+}
+
+function Podium({
+  entries,
+}: {
+  entries: { userId: string; rank: number; displayName: string; username: string | null; rating: number }[];
+}): React.JSX.Element {
+  const ordered = [...entries].sort((a, b) => a.rank - b.rank);
+  const spotlight: (typeof ordered[number] | null)[] = [ordered[1] ?? null, ordered[0] ?? null, ordered[2] ?? null];
+  const frames = [
+    'border-muted-foreground/30',
+    'border-gold/50 shadow-[0_0_36px_-10px_hsl(var(--gold)/0.5)]',
+    'border-warning/40',
+  ];
+  const medals = ['text-muted-foreground', 'text-gold', 'text-warning'];
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-border" aria-label="Top three">
+      <div className="absolute inset-0 bg-gradient-to-b from-primary/[0.1] via-card to-card" aria-hidden />
+      <div className="aurora-field" aria-hidden>
+        <span className="aurora-orb left-[20%] top-[-70%] size-56 bg-primary/20" />
+        <span className="aurora-orb right-[15%] top-[-40%] size-48 bg-gold/15 [animation-delay:-6s]" />
+      </div>
+      <div className="relative grid grid-cols-3 items-end gap-2 p-4 sm:gap-3 sm:p-5">
+        {spotlight.map((entry, slot) => {
+          const isFirst = slot === 1;
+          if (!entry) {
+            return <span key={slot} />;
+          }
+          const initial = entry.displayName.trim().charAt(0).toUpperCase() || 'A';
+          return (
+            <div
+              key={entry.userId}
+              className="animate-fade-up flex flex-col items-center gap-1.5 text-center"
+              style={{ animationDelay: `${slot * 90}ms` }}
+            >
+              {isFirst ? <Crown className="size-5 animate-float text-gold" aria-hidden /> : null}
+              <Avatar className={cn('border-2', frames[slot], isFirst ? 'size-14' : 'size-11')}>
+                <AvatarFallback className={cn('font-bold', medals[slot], isFirst ? 'text-lg' : 'text-sm')}>
+                  {initial}
+                </AvatarFallback>
+              </Avatar>
+              <p className="w-full truncate text-xs font-semibold text-foreground sm:text-sm">
+                {entry.displayName}
+              </p>
+              <p className={cn('font-metric font-extrabold', isFirst ? 'gradient-text-gold text-xl' : 'text-sm text-muted-foreground')}>
+                {entry.rating}
+              </p>
+              <span className={cn('font-metric rounded-full px-2 py-0.5 text-[11px] font-bold', isFirst ? 'bg-gold/15 text-gold' : 'bg-muted text-muted-foreground')}>
+                #{entry.rank}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="relative h-1 bg-gradient-to-r from-primary via-gold to-primary" aria-hidden />
+    </div>
   );
 }
 
@@ -264,13 +334,18 @@ export function LeaderboardBoard(): React.JSX.Element {
             }
           />
         ) : (
-          <Card>
-            <CardContent className="grid gap-2 p-3">
-              {(contestBoard.data ?? []).map((entry) => (
-                <ContestRow key={entry.userId} entry={entry} />
-              ))}
-            </CardContent>
-          </Card>
+          <div className="space-y-3">
+            {(contestBoard.data ?? []).length >= 3 && !trimmedInstitution ? (
+              <Podium entries={(contestBoard.data ?? []).slice(0, 3)} />
+            ) : null}
+            <Card className="animate-fade-in">
+              <CardContent className="grid gap-2 p-3">
+                {(contestBoard.data ?? []).map((entry, index) => (
+                  <ContestRow key={entry.userId} entry={entry} index={index} />
+                ))}
+              </CardContent>
+            </Card>
+          </div>
         )
       ) : domains.isPending ? (
         <RowsSkeleton rows={3} />
@@ -291,10 +366,10 @@ export function LeaderboardBoard(): React.JSX.Element {
           }
         />
       ) : (
-        <Card>
+        <Card className="animate-fade-in">
           <CardContent className="grid gap-2 p-3">
-            {(challengeBoard.data ?? []).map((entry) => (
-              <ChallengeRow key={entry.userId} entry={entry} />
+            {(challengeBoard.data ?? []).map((entry, index) => (
+              <ChallengeRow key={entry.userId} entry={entry} index={index} />
             ))}
           </CardContent>
         </Card>

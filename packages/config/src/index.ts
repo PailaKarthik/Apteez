@@ -43,7 +43,7 @@ export const PRIMARY_NAV: readonly NavItem[] = [
   { key: 'home', label: 'Home', href: '/', icon: 'home' },
   { key: 'challenge', label: 'Challenge', href: '/challenge', icon: 'swords' },
   { key: 'contests', label: 'Contests', href: '/contests', icon: 'trophy' },
-  { key: 'explore', label: 'Explore', href: '/explore', icon: 'compass' },
+  { key: 'explore', label: 'Explore', href: '/explore', icon: 'compass', badge: 'soon' },
   { key: 'leaderboard', label: 'Leaderboard', href: '/leaderboard', icon: 'crown' },
   { key: 'discussions', label: 'Discussions', href: '/discussions', icon: 'messages' },
   { key: 'events', label: 'Events', href: '/events', icon: 'calendar' },
@@ -52,11 +52,12 @@ export const PRIMARY_NAV: readonly NavItem[] = [
 /**
  * Personal areas. Weekly Targets is intentionally NOT part of the seven
  * primary sections; it ships as "Coming Soon" until a later prompt
- * implements target setting and points.
+ * implements target setting and points. Explore and Rewards likewise carry
+ * the "Soon" badge while their full experiences are still landing.
  */
 export const PERSONAL_NAV: readonly NavItem[] = [
   { key: 'targets', label: 'Weekly Targets', href: '/targets', icon: 'target', badge: 'soon' },
-  { key: 'rewards', label: 'Rewards', href: '/rewards', icon: 'gift' },
+  { key: 'rewards', label: 'Rewards', href: '/rewards', icon: 'gift', badge: 'soon' },
   { key: 'contribute', label: 'Contribute', href: '/contribute', icon: 'pen' },
 ] as const;
 

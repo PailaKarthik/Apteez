@@ -38,31 +38,46 @@ export default function PublicProfilePage(): React.JSX.Element {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow="Public arena identity"
         title={username ? `@${username}` : 'Profile'}
         description="Competitive identity — public to everyone unless the owner set it private."
       />
       {isLoading ? (
-        <Card>
-          <CardContent className="p-6 text-sm text-muted-foreground">Loading profile…</CardContent>
+        <Card className="animate-fade-in overflow-hidden" aria-busy="true" aria-label="Loading profile">
+          <div className="loading-rail h-1" aria-hidden>
+            <span />
+          </div>
+          <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
+            <div className="skeleton-shine size-16 rounded-full" />
+            <div className="flex-1 space-y-2">
+              <div className="skeleton-shine h-6 w-48 rounded-lg" />
+              <div className="skeleton-shine h-4 w-64 max-w-full rounded-md" />
+            </div>
+          </CardContent>
         </Card>
       ) : isError || !profile ? (
-        <Card>
+        <Card className="animate-fade-in border-destructive/30">
           <CardContent className="p-6 text-sm text-muted-foreground">
             {error instanceof ApiError ? error.message : 'Profile not found.'}
           </CardContent>
         </Card>
       ) : (
         <>
-          <Card>
+          <Card className="page-enter-1 overflow-hidden">
+            <span className="block h-1.5 bg-gradient-to-r from-primary via-accent-foreground to-primary" aria-hidden />
             <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
-              <Avatar className="size-16">
-                {profile.avatarUrl ? (
-                  <AvatarImage src={profile.avatarUrl} alt={profile.displayName} />
-                ) : null}
-                <AvatarFallback className="text-xl">{initial}</AvatarFallback>
-              </Avatar>
+              <span className="rounded-full bg-gradient-to-br from-primary to-accent-foreground p-[3px] shadow-lg shadow-primary/30" aria-hidden>
+                <Avatar className="size-16 border-2 border-card">
+                  {profile.avatarUrl ? (
+                    <AvatarImage src={profile.avatarUrl} alt={profile.displayName} />
+                  ) : null}
+                  <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/60 text-xl font-extrabold text-primary">
+                    {initial}
+                  </AvatarFallback>
+                </Avatar>
+              </span>
               <div className="min-w-0 flex-1">
-                <CardTitle className="text-xl">{profile.displayName}</CardTitle>
+                <CardTitle className="gradient-text text-2xl font-extrabold">{profile.displayName}</CardTitle>
                 <CardDescription className="mt-1">
                   @{profile.username}
                   {profile.institution ? ` · ${profile.institution}` : ''}

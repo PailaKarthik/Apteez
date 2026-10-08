@@ -42,9 +42,9 @@ export function LessonContent({ blocks }: { blocks: LearningContentBlock[] }): R
             return (
               <aside
                 key={index}
-                className="rounded-xl border border-amber-600/25 bg-amber-600/5 p-4 text-sm leading-relaxed text-foreground/90"
+                className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm leading-relaxed text-foreground/90"
               >
-                <span className="mb-1 block text-metadata font-semibold uppercase tracking-widest text-amber-700 dark:text-amber-400">
+                <span className="mb-1 block text-metadata font-semibold uppercase tracking-widest text-warning">
                   Note
                 </span>
                 {block.value}

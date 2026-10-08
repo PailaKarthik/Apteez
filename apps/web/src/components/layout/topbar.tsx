@@ -1,3 +1,5 @@
+import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Button } from '@apteez/ui';
 import { Breadcrumb } from './breadcrumb';
 import { GlobalSearch } from '@/components/search/global-search';
 import { FavoritesButton } from './favorites-button';
@@ -9,17 +11,42 @@ import { ThemeToggle } from './theme-toggle';
 import { UserMenu } from './user-menu';
 
 /**
- * Persistent top bar per the Figma structure: section context on the left;
- * streak, favorites, notifications, help, theme and profile on the right.
- * Streak/favorites compact down on mobile; nothing overflows.
+ * Persistent top bar per the Figma structure: sidebar toggle + section
+ * context on the left; streak, favorites, notifications, help, theme and
+ * profile on the right. Streak/favorites compact down on mobile; nothing
+ * overflows.
  *
  * Crowding rule: at 360px the icon group alone exceeds the viewport, so the
  * help menu hides below sm and the (wide, 3-segment) theme toggle hides
- * below md — both stay one tap away in the drawer/profile menu.
+ * below md — both stay one tap away in the drawer/profile menu. The
+ * sidebar toggle only exists on lg+, where the sidebar itself lives.
  */
-export function Topbar(): React.JSX.Element {
+export function Topbar({
+  sidebarCollapsed = false,
+  onToggleSidebar,
+}: {
+  sidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
+}): React.JSX.Element {
   return (
-    <header className="sticky top-0 z-30 flex h-top-bar shrink-0 items-center gap-1.5 border-b border-border bg-background/85 px-3 backdrop-blur sm:gap-3 sm:px-6">
+    <header className="sticky top-0 z-30 flex h-top-bar shrink-0 items-center gap-1.5 border-b border-border/70 bg-background/75 px-3 shadow-[0_8px_30px_-18px_hsl(var(--primary)/0.35)] backdrop-blur-xl sm:gap-3 sm:px-6">
+      {onToggleSidebar ? (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onToggleSidebar}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-expanded={!sidebarCollapsed}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className="hidden shrink-0 transition-all duration-300 hover:border-primary/40 hover:text-primary lg:inline-flex"
+        >
+          {sidebarCollapsed ? (
+            <PanelLeftOpen aria-hidden />
+          ) : (
+            <PanelLeftClose aria-hidden />
+          )}
+        </Button>
+      ) : null}
       <MobileNav />
       <Breadcrumb />
       <div className="ml-auto hidden min-w-0 flex-1 max-w-md items-center px-2 md:flex">

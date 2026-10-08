@@ -11,7 +11,6 @@ import {
   EmptyState,
   ErrorState,
   Input,
-  LoadingState,
   Tabs,
   TabsContent,
   TabsList,
@@ -59,7 +58,22 @@ function CollectionPanel({ collectionId }: { collectionId: string }): React.JSX.
   const problems = query.data?.items ?? [];
 
   if (query.isPending) {
-    return <LoadingState title="Loading collection…" />;
+    return (
+      <div className="animate-fade-in space-y-2" aria-busy="true" aria-label="Loading collection">
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i} className="flex items-center gap-3 rounded-xl border border-border p-3" aria-hidden>
+            <div className="skeleton-shine size-9 rounded-xl" />
+            <div className="flex-1 space-y-1.5">
+              <div className="skeleton-shine h-4 w-2/5 rounded-md" />
+              <div className="skeleton-shine h-3 w-3/5 rounded-md" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
   }
   if (query.isError) {
     return (
@@ -149,15 +163,15 @@ export function FavoritesWorkspace(): React.JSX.Element {
 
   return (
     <Tabs value={tab} onValueChange={setTab} className="w-full">
-      <TabsList className="flex-wrap">
-        <TabsTrigger value={DEFAULT_TAB}>
-          <Heart aria-hidden />
+      <TabsList className="glass sticky top-top-bar z-10 h-auto flex-wrap py-1.5 shadow-sm">
+        <TabsTrigger value={DEFAULT_TAB} className="gap-1.5">
+          <Heart aria-hidden className="fill-primary/20 text-primary" />
           Favorites
         </TabsTrigger>
         {customCollections.map((collection) => (
-          <TabsTrigger key={collection.id} value={collection.id}>
+          <TabsTrigger key={collection.id} value={collection.id} className="gap-1.5">
             {collection.name}
-            <span className="font-metric text-xs text-muted-foreground">
+            <span className="rounded-full bg-primary/10 px-1.5 py-0.5 font-metric text-xs font-bold text-primary">
               {collection.problemCount}
             </span>
           </TabsTrigger>
@@ -201,10 +215,12 @@ export function FavoritesWorkspace(): React.JSX.Element {
           ))}
         </div>
 
-        <Card className="h-fit">
+        <Card className="glass h-fit shadow-sm">
           <CardContent className="space-y-3 p-4">
             <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <FolderPlus className="size-4" aria-hidden />
+              <span className="icon-tile size-7" aria-hidden>
+                <FolderPlus className="size-3.5" />
+              </span>
               Collections
             </p>
             <div className="flex gap-1.5">
@@ -219,8 +235,13 @@ export function FavoritesWorkspace(): React.JSX.Element {
                   }
                 }}
               />
-              <Button size="sm" onClick={onCreate} disabled={create.isPending}>
-                Add
+              <Button
+                size="sm"
+                onClick={onCreate}
+                disabled={create.isPending}
+                className="btn-sheen shrink-0 shadow-md shadow-primary/20"
+              >
+                {create.isPending ? <span className="typing-dots">Adding</span> : 'Add'}
               </Button>
             </div>
             <ul className="space-y-1">
@@ -233,8 +254,8 @@ export function FavoritesWorkspace(): React.JSX.Element {
                   <li
                     key={collection.id}
                     className={cn(
-                      'flex items-center gap-1.5 rounded-lg border border-border px-2 py-1.5',
-                      tab === collection.id && 'border-primary/50 bg-accent/50',
+                      'flex items-center gap-1.5 rounded-xl border border-border px-2 py-1.5 transition-all duration-200 hover:border-primary/40 hover:shadow-sm',
+                      tab === collection.id && 'border-primary/50 bg-primary/[0.06] shadow-[0_0_16px_-6px_hsl(var(--primary)/0.4)]',
                     )}
                   >
                     {editingId === collection.id ? (

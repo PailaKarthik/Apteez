@@ -11,7 +11,6 @@ import {
   CardContent,
   EmptyState,
   ErrorState,
-  LoadingState,
   Pagination,
   cn,
 } from '@apteez/ui';
@@ -27,15 +26,29 @@ const STATUS_TONE = {
 
 const PAGE_SIZE = 10;
 
+const STATUS_STRIP: Record<string, string> = {
+  PENDING: 'from-warning to-warning/30',
+  UNDER_REVIEW: 'from-primary to-accent-foreground',
+  APPROVED: 'from-success to-success/40',
+  REJECTED: 'from-destructive to-destructive/40',
+};
+
 function SubmissionRow({
   item,
   onRevise,
+  index = 0,
 }: {
   item: ContributionMineItemDto;
   onRevise: (item: ContributionMineItemDto) => void;
+  index?: number;
 }): React.JSX.Element {
   return (
-    <Card>
+    <div className="row-enter" style={{ animationDelay: `${Math.min(index, 6) * 60}ms` }}>
+    <Card className="card-lift overflow-hidden">
+      <span
+        className={`block h-1 bg-gradient-to-r ${STATUS_STRIP[item.status] ?? 'from-muted-foreground/30 to-transparent'}`}
+        aria-hidden
+      />
       <CardContent className="space-y-2 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={STATUS_TONE[item.status] ?? 'secondary'}>
@@ -44,37 +57,49 @@ function SubmissionRow({
           <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
             {item.title}
           </p>
+          {item.resultingProblemId ? (
+            <Button variant="ghost" size="sm" asChild className="shrink-0 transition-all hover:gap-2.5 hover:text-primary">
+              <Link href={`/problems/${item.resultingProblemId}`} aria-label="problem">
+                View published →
+              </Link>
+            </Button>
+          ) : null}
         </div>
         <p className="text-xs text-muted-foreground">
           Submitted {new Date(item.submittedAt).toLocaleString()}
-          {item.resultingProblemId ? (
-            <>
-              {' · published as '}
-              <Link
-                href={`/problems/${item.resultingProblemId}`}
-                className="text-primary underline-offset-2 hover:underline"
-              >
-                problem
-              </Link>
-            </>
-          ) : null}
         </p>
         {item.feedback ? (
-          <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-foreground">
-            <span className="font-semibold">Reviewer feedback: </span>
-            {item.feedback}
-          </p>
+          <div className="flex gap-2 rounded-xl border border-primary/20 bg-primary/[0.04] px-3 py-2.5 text-xs">
+            <span className="icon-tile size-6 shrink-0" aria-hidden>
+              <span className="text-[10px] font-extrabold">R</span>
+            </span>
+            <p className="min-w-0 text-foreground">
+              <span className="font-semibold text-primary">Reviewer feedback: </span>
+              {item.feedback}
+            </p>
+          </div>
         ) : null}
         {item.status === 'PENDING' ? (
-          <Button variant="outline" size="sm" onClick={() => onRevise(item)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onRevise(item)}
+            className="transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md hover:shadow-primary/15"
+          >
             <Pencil aria-hidden />
             Revise
           </Button>
         ) : item.status === 'UNDER_REVIEW' ? (
-          <p className="text-xs text-muted-foreground">A reviewer is looking at this now.</p>
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="live-dot" aria-hidden />
+            A reviewer is looking at this now.
+          </p>
+        ) : item.status === 'APPROVED' ? (
+          <p className="text-xs font-medium text-success">Approved — live in the library.</p>
         ) : null}
       </CardContent>
     </Card>
+    </div>
   );
 }
 
@@ -103,7 +128,15 @@ export function MySubmissions(): React.JSX.Element {
           Back to submissions
         </Button>
         {detail.isPending ? (
-          <LoadingState title="Loading your submission…" />
+          <div className="animate-fade-in space-y-3" aria-busy="true" aria-label="Loading your submission">
+            <div className="loading-rail h-1" aria-hidden>
+              <span />
+            </div>
+            <div className="rounded-xl border border-border p-5">
+              <div className="skeleton-shine h-6 w-1/2 rounded-md" />
+              <div className="skeleton-shine mt-3 h-24 w-full rounded-xl" />
+            </div>
+          </div>
         ) : detail.isError || !detail.data ? (
           <ErrorState title="Could not load it" onRetry={() => void detail.refetch()} />
         ) : (
@@ -154,29 +187,50 @@ export function MySubmissions(): React.JSX.Element {
   }
 
   if (list.isPending) {
-    return <LoadingState title="Loading your submissions…" />;
+    return (
+      <div className="animate-fade-in space-y-3" aria-busy="true" aria-label="Loading your submissions">
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        {Array.from({ length: 3 }, (_, i) => (
+          <Card key={i} className="animate-fade-up overflow-hidden" style={{ animationDelay: `${i * 70}ms` }} aria-hidden>
+            <CardContent className="space-y-2 p-4">
+              <div className="flex items-center gap-2">
+                <div className="skeleton-shine h-5 w-24 rounded-full" />
+                <div className="skeleton-shine h-4 flex-1 rounded-md" />
+              </div>
+              <div className="skeleton-shine h-3 w-2/3 rounded-md" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
   }
   if (list.isError || !list.data) {
     return <ErrorState title="Could not load submissions" onRetry={() => void list.refetch()} />;
   }
   if (list.data.items.length === 0) {
     return (
-      <EmptyState
-        title="Nothing submitted yet"
-        description="Compose a question — it lands in the review queue and reviewers get notified."
-      />
+      <Card className="animate-scale-in border-dashed border-primary/30 bg-primary/[0.03]">
+        <CardContent className="p-8 text-center">
+          <EmptyState
+            title="Nothing submitted yet"
+            description="Compose a question — it lands in the review queue and reviewers get notified."
+          />
+        </CardContent>
+      </Card>
     );
   }
 
   return (
     <div className={cn('space-y-3', list.isFetching ? 'opacity-70' : null)}>
-      <p className="text-xs text-muted-foreground" aria-live="polite">
-        Showing <span className="font-metric">{list.data.items.length}</span> of{' '}
+      <p className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground" aria-live="polite">
+        Showing <span className="gradient-text-cool font-metric font-bold">{list.data.items.length}</span> of{' '}
         <span className="font-metric">{list.data.total}</span>
-        {list.isFetching ? ' · updating…' : ''}
+        {list.isFetching ? <span className="typing-dots">updating</span> : ''}
       </p>
-      {list.data.items.map((item) => (
-        <SubmissionRow key={item.id} item={item} onRevise={setRevising} />
+      {list.data.items.map((item, index) => (
+        <SubmissionRow key={item.id} item={item} onRevise={setRevising} index={index} />
       ))}
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
     </div>

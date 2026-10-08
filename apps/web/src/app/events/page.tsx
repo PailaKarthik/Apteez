@@ -7,7 +7,6 @@ import {
   Button,
   EmptyState,
   ErrorState,
-  LoadingState,
   SearchInput,
   Select,
   SelectContent,
@@ -67,24 +66,28 @@ export default function EventsPage(): React.JSX.Element {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow="Gather · Compete · Belong"
         title="Events"
         description="Discover aptitude events, register, and compete — powered by the canonical question library."
         actions={
           <Link href="/events/create">
-            <Button>{createAccess.allowed ? 'Create event' : 'Host an event'}</Button>
+            <Button className="btn-sheen shadow-lg shadow-primary/20">
+              {createAccess.allowed ? 'Create event' : 'Host an event'}
+            </Button>
           </Link>
         }
       />
       <Tabs value={phase} onValueChange={setPhase}>
-        <TabsList>
+        <TabsList className="glass sticky top-top-bar z-10 shadow-sm">
           {PHASES.map((p) => (
-            <TabsTrigger key={p.value} value={p.value}>
+            <TabsTrigger key={p.value} value={p.value} className="gap-1.5">
+              {p.value === 'live' ? <span className="live-dot" aria-hidden /> : null}
               {p.label}
             </TabsTrigger>
           ))}
         </TabsList>
       </Tabs>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="glass flex flex-col gap-3 rounded-2xl border border-border p-3 shadow-sm sm:flex-row sm:items-center">
         <SearchInput
           label="Search events"
           value={search}
@@ -122,7 +125,31 @@ export default function EventsPage(): React.JSX.Element {
         </div>
       </div>
       {isLoading ? (
-        <LoadingState title="Loading events…" />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true" aria-label="Loading events">
+          {Array.from({ length: 6 }, (_, i) => (
+            <div
+              key={i}
+              className="animate-fade-up overflow-hidden rounded-xl border border-border"
+              style={{ animationDelay: `${i * 70}ms` }}
+              aria-hidden
+            >
+              <div className="loading-rail h-1" aria-hidden>
+                <span />
+              </div>
+              <div className="space-y-3 p-5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="skeleton-shine h-5 w-2/3 rounded-md" />
+                  <div className="skeleton-shine h-5 w-16 rounded-full" />
+                </div>
+                <div className="skeleton-shine h-3 w-full rounded-md" />
+                <div className="flex gap-2 pt-1">
+                  <div className="skeleton-shine h-7 w-20 rounded-md" />
+                  <div className="skeleton-shine h-7 w-20 rounded-md" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       ) : isError ? (
         <ErrorState
           description={error instanceof ApiError ? error.message : 'Could not load events.'}
@@ -146,8 +173,14 @@ export default function EventsPage(): React.JSX.Element {
         />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {data.items.map((event) => (
-            <EventCard key={event.id} event={event} />
+          {data.items.map((event, index) => (
+            <div
+              key={event.id}
+              className="animate-fade-up"
+              style={{ animationDelay: `${Math.min(index, 8) * 60}ms` }}
+            >
+              <EventCard event={event} />
+            </div>
           ))}
         </div>
       )}

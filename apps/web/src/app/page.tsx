@@ -17,9 +17,27 @@ const ProblemLibrary = dynamic(
   () => import('@/components/home/problem-library').then((m) => m.ProblemLibrary),
   {
     loading: () => (
-      <div className="space-y-3" aria-busy="true" aria-label="Loading problem library">
-        <div className="h-10 animate-pulse rounded-xl bg-muted" />
-        <div className="h-64 animate-pulse rounded-2xl bg-muted" />
+      <div
+        className="animate-fade-in space-y-3"
+        aria-busy="true"
+        aria-label="Loading problem library"
+      >
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        <div className="skeleton-shine h-12 rounded-2xl" />
+        <div className="overflow-hidden rounded-2xl border border-border">
+          {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} className="flex items-center gap-3 border-b border-border p-3 last:border-0">
+              <div className="skeleton-shine size-9 rounded-xl" />
+              <div className="flex-1 space-y-1.5">
+                <div className="skeleton-shine h-4 w-2/5 rounded-md" />
+                <div className="skeleton-shine h-3 w-3/5 rounded-md" />
+              </div>
+              <div className="skeleton-shine h-6 w-16 rounded-full" />
+            </div>
+          ))}
+        </div>
       </div>
     ),
   },

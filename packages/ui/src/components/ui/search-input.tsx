@@ -57,8 +57,20 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
     );
 
     const clear = (): void => {
+      const node = inputRef.current;
       setValue('');
-      inputRef.current?.focus();
+      if (node) {
+        // Push the empty value through React's change pipeline so
+        // controlled parents (which only listen to onChange) actually
+        // update — otherwise the text snaps right back.
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value',
+        )?.set;
+        setter?.call(node, '');
+        node.dispatchEvent(new Event('input', { bubbles: true }));
+        node.focus();
+      }
     };
 
     return (

@@ -10,7 +10,6 @@ import {
   CardTitle,
   EmptyState,
   ErrorState,
-  LoadingState,
   cn,
 } from '@apteez/ui';
 import { PageHeader } from '@/components/shared/page-header';
@@ -33,7 +32,19 @@ export default function ContestUpsolvePage(): React.JSX.Element {
   const { data, isLoading, isError, error, refetch } = useContestUpsolve(id);
 
   if (isLoading) {
-    return <LoadingState title="Loading solutions…" />;
+    return (
+      <div className="animate-fade-in space-y-4" aria-busy="true" aria-label="Loading solutions">
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        {Array.from({ length: 3 }, (_, i) => (
+          <div key={i} className="rounded-xl border border-border p-5" aria-hidden>
+            <div className="skeleton-shine h-6 w-2/3 rounded-md" />
+            <div className="skeleton-shine mt-3 h-20 w-full rounded-xl" />
+          </div>
+        ))}
+      </div>
+    );
   }
   if (isError || !data) {
     return (
@@ -47,6 +58,7 @@ export default function ContestUpsolvePage(): React.JSX.Element {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow="Review · Learn · Repeat"
         title={`Upsolve — ${contest?.name ?? 'Contest'}`}
         description="Review every question with the official answers. Your submitted result stays untouched."
         actions={

@@ -10,6 +10,7 @@ export default function ChallengePage(): React.JSX.Element {
   return (
     <PageStack>
       <PageHeader
+        eyebrow="1v1 · Live · Rated"
         title="Challenge"
         description="Pick a domain and duel a live opponent. +1 per correct answer, −1 per wrong."
       />

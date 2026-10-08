@@ -10,7 +10,6 @@ import {
   CardTitle,
   EmptyState,
   ErrorState,
-  LoadingState,
 } from '@apteez/ui';
 import { QuestionRenderer } from '@/components/problems/question-renderer';
 import { OptionRenderer } from '@/components/problems/option-renderer';
@@ -69,7 +68,38 @@ export function EventLiveView({ eventId }: { eventId: string }): React.JSX.Eleme
   const options = useMemo(() => current?.options ?? [], [current]);
 
   if (isLoading) {
-    return <LoadingState title="Loading your event session…" />;
+    return (
+      <div className="animate-fade-in grid gap-6 lg:grid-cols-3" aria-busy="true" aria-label="Loading your event session">
+        <div className="space-y-4 lg:col-span-2">
+          <div className="overflow-hidden rounded-xl border border-border">
+            <div className="loading-rail h-1" aria-hidden>
+              <span />
+            </div>
+            <div className="space-y-4 p-6">
+              <div className="flex items-center justify-between">
+                <div className="skeleton-shine h-6 w-32 rounded-full" />
+                <div className="skeleton-shine h-4 w-20 rounded-md" />
+              </div>
+              <div className="skeleton-shine h-7 w-3/4 rounded-lg" />
+              <div className="skeleton-shine h-24 w-full rounded-xl" />
+              <div className="grid gap-2">
+                <div className="skeleton-shine h-12 w-full rounded-lg" />
+                <div className="skeleton-shine h-12 w-full rounded-lg" />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-border p-6">
+          <div className="skeleton-shine h-5 w-24 rounded-md" />
+          <div className="mt-3 grid grid-cols-5 gap-2">
+            {Array.from({ length: 10 }, (_, i) => (
+              <div key={i} className="skeleton-shine h-11 rounded-md" />
+            ))}
+          </div>
+          <div className="skeleton-shine mt-4 h-10 w-full rounded-lg" />
+        </div>
+      </div>
+    );
   }
   if (isError || !session) {
     return (
@@ -81,10 +111,11 @@ export function EventLiveView({ eventId }: { eventId: string }): React.JSX.Eleme
   }
   if (result) {
     return (
-      <Card>
+      <Card className="animate-scale-in overflow-hidden border-success/30">
+        <span className="block h-1 bg-gradient-to-r from-success to-success/40" aria-hidden />
         <CardContent className="space-y-3 p-6">
           <CardTitle className="text-card-title">
-            Submitted — score <span className="font-metric">{result.score}</span>
+            Submitted — score <span className="gradient-text-cool font-metric font-extrabold">{result.score}</span>
           </CardTitle>
           <p className="text-sm text-muted-foreground">
             Correct <span className="font-metric">{result.correctCount}</span> · Wrong{' '}
@@ -105,11 +136,15 @@ export function EventLiveView({ eventId }: { eventId: string }): React.JSX.Eleme
 
   return (
     <div className="grid gap-6 lg:grid-cols-3">
-      <div className="space-y-4 lg:col-span-2">
-        <Card>
+      <div className="page-enter space-y-4 lg:col-span-2">
+        <Card className="overflow-hidden">
+          <div className="loading-rail h-0.5" aria-hidden>
+            <span />
+          </div>
           <CardContent className="space-y-4 p-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <Badge variant="success" className="shrink-0">
+              <Badge variant="success" className="flex shrink-0 items-center gap-1.5">
+                <span className="live-dot" aria-hidden />
                 Live ·{' '}
                 <span className="font-metric tabular-nums">{formatCountdown(remaining)}</span> left
               </Badge>
@@ -178,10 +213,13 @@ export function EventLiveView({ eventId }: { eventId: string }): React.JSX.Eleme
           </CardContent>
         </Card>
       </div>
-      <div className="space-y-4">
-        <Card>
+      <div className="page-enter-1 space-y-4">
+        <Card className="glass sticky top-top-bar shadow-sm">
           <CardContent className="space-y-3 p-6">
-            <CardTitle className="text-card-title">Navigator</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-card-title">
+              Navigator
+              <span className="h-px flex-1 bg-gradient-to-r from-primary/40 to-transparent" aria-hidden />
+            </CardTitle>
             {/* Real buttons (44px targets): position jumps reuse the review
                 mutation with an unchanged flag, mirroring contests. Long
                 question lists scroll instead of pushing submit off-screen. */}
@@ -207,7 +245,7 @@ export function EventLiveView({ eventId }: { eventId: string }): React.JSX.Eleme
                     )
                   }
                   aria-label={`Go to question ${q.position + 1}: ${q.state}`}
-                  className={`flex min-h-11 min-w-11 items-center justify-center rounded-md border text-center font-metric text-sm disabled:opacity-60 ${q.state === 'current' ? 'border-primary bg-primary/10' : q.state === 'answered' ? 'border-success/50' : q.state === 'review' ? 'border-warning/60' : ''}`}
+                  className={`flex min-h-11 min-w-11 items-center justify-center rounded-md border text-center font-metric text-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md hover:shadow-primary/15 disabled:opacity-60 ${q.state === 'current' ? 'border-primary bg-primary/10 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.5)]' : q.state === 'answered' ? 'border-success/50 bg-success/5' : q.state === 'review' ? 'border-warning/60 bg-warning/5' : ''}`}
                 >
                   {q.position + 1}
                 </button>

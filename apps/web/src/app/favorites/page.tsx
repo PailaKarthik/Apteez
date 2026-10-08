@@ -13,6 +13,7 @@ export default function FavoritesPage(): React.JSX.Element {
   return (
     <PageStack>
       <PageHeader
+        eyebrow="Revisit · Revise · Master"
         title="Favorites"
         description="Saved problems and the collections you organise them into."
       />

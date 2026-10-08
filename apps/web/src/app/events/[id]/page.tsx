@@ -12,7 +12,6 @@ import {
   CardTitle,
   EmptyState,
   ErrorState,
-  LoadingState,
   Progress,
 } from '@apteez/ui';
 import { PageHeader } from '@/components/shared/page-header';
@@ -58,7 +57,36 @@ export default function EventDetailPage(): React.JSX.Element {
   const [code, setCode] = useState('');
 
   if (isLoading) {
-    return <LoadingState title="Loading event…" />;
+    return (
+      <div className="animate-fade-in space-y-6" aria-busy="true" aria-label="Loading event">
+        <div className="space-y-2">
+          <div className="skeleton-shine h-8 w-64 max-w-full rounded-lg" />
+          <div className="skeleton-shine h-4 w-96 max-w-full rounded-md" />
+        </div>
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+            <div className="rounded-xl border border-border p-6">
+              <div className="flex gap-2">
+                <div className="skeleton-shine h-6 w-20 rounded-full" />
+                <div className="skeleton-shine h-6 w-20 rounded-full" />
+                <div className="skeleton-shine h-6 w-20 rounded-full" />
+              </div>
+              <div className="skeleton-shine mt-4 h-4 w-full rounded-md" />
+              <div className="skeleton-shine mt-2 h-4 w-5/6 rounded-md" />
+              <div className="skeleton-shine mt-2 h-4 w-2/3 rounded-md" />
+            </div>
+          </div>
+          <div className="rounded-xl border border-border p-6">
+            <div className="skeleton-shine h-5 w-32 rounded-md" />
+            <div className="skeleton-shine mt-3 h-10 w-full rounded-lg" />
+            <div className="skeleton-shine mt-2 h-10 w-full rounded-lg" />
+          </div>
+        </div>
+      </div>
+    );
   }
   if (isError || !event) {
     return (
@@ -105,6 +133,7 @@ export default function EventDetailPage(): React.JSX.Element {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow={event.phase === 'live' ? 'Happening now' : `${event.eventType} · ${event.visibility}`}
         title={event.title}
         description={`${event.eventType} · ${event.visibility} · ${event.difficulty}`}
         actions={
@@ -116,8 +145,12 @@ export default function EventDetailPage(): React.JSX.Element {
         }
       />
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          <Card>
+        <div className="page-enter-1 space-y-6 lg:col-span-2">
+          <Card className="animate-fade-up overflow-hidden">
+            <span
+              className={`block h-1 bg-gradient-to-r ${event.phase === 'live' ? 'from-success to-success/50' : 'from-primary to-accent-foreground'}`}
+              aria-hidden
+            />
             <CardContent className="space-y-4 p-6">
               <div className="flex flex-wrap gap-2">
                 <Badge
@@ -128,7 +161,9 @@ export default function EventDetailPage(): React.JSX.Element {
                         ? 'secondary'
                         : 'warning'
                   }
+                  className="flex items-center gap-1.5"
                 >
+                  {event.phase === 'live' ? <span className="live-dot" aria-hidden /> : null}
                   {event.status.replace(/_/g, ' ')}
                 </Badge>
                 {event.isOfficial ? <Badge variant="default">Official</Badge> : null}
@@ -181,9 +216,11 @@ export default function EventDetailPage(): React.JSX.Element {
             </CardContent>
           </Card>
           {ownResult ? (
-            <Card>
+            <Card className="animate-scale-in border-primary/30 shadow-lg shadow-primary/10">
               <CardContent className="space-y-2 p-6">
-                <CardTitle className="text-card-title">Your result</CardTitle>
+                <CardTitle className="flex items-center gap-2 text-card-title">
+                  <span className="gradient-text-cool">Your result</span>
+                </CardTitle>
                 <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
                   <span>
                     Score <span className="font-metric text-lg">{ownResult.score}</span>
@@ -219,10 +256,11 @@ export default function EventDetailPage(): React.JSX.Element {
                   </span>
                 </div>
                 <ol className="space-y-2">
-                  {leaderboard.items.map((row) => (
+                  {leaderboard.items.map((row, index) => (
                     <li
                       key={row.userId}
-                      className={`flex items-center justify-between gap-2 rounded-lg border p-3 text-sm ${row.isCurrentUser ? 'border-primary/50 bg-primary/5' : 'border-border'}`}
+                      className={`row-enter row-glow flex items-center justify-between gap-2 rounded-lg border p-3 text-sm ${row.isCurrentUser ? 'border-primary/50 bg-primary/5 shadow-[0_0_20px_-8px_hsl(var(--primary)/0.4)]' : 'border-border'}`}
+                      style={{ animationDelay: `${Math.min(index, 6) * 50}ms` }}
                     >
                       <span className="min-w-0 flex-1">
                         <span className="font-metric">#{row.rank}</span>{' '}
@@ -248,8 +286,9 @@ export default function EventDetailPage(): React.JSX.Element {
             </Card>
           ) : null}
         </div>
-        <div className="space-y-4">
-          <Card>
+        <div className="page-enter-2 space-y-4">
+          <Card className="card-lift overflow-hidden">
+            <span className="block h-1 bg-gradient-to-r from-primary to-accent-foreground" aria-hidden />
             <CardContent className="space-y-4 p-6">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-card-title">Participation</CardTitle>
@@ -340,8 +379,12 @@ export default function EventDetailPage(): React.JSX.Element {
                   ) : null}
                 </div>
               ) : event.canRegister ? (
-                <Button className="w-full" onClick={onRegister} disabled={register.isPending}>
-                  Register — free
+                <Button
+                  className="btn-sheen w-full transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/25"
+                  onClick={onRegister}
+                  disabled={register.isPending}
+                >
+                  {register.isPending ? <span className="typing-dots">Registering</span> : 'Register — free'}
                 </Button>
               ) : (
                 <EmptyState

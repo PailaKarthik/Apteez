@@ -64,6 +64,8 @@ const favoriteMock = vi.hoisted(() => ({
 
 vi.mock('@/hooks/use-problems', () => ({
   useProblemsFeed: () => feedMock,
+  useCategories: () => ({ data: [{ slug: 'quantitative', name: 'Quantitative' }] }),
+  useExamTags: () => ({ data: [{ slug: 'ssc', name: 'SSC' }] }),
 }));
 
 vi.mock('@/hooks/use-home', () => ({
@@ -152,6 +154,22 @@ describe('ProblemLibrary', () => {
     expect(screen.getByText(/could not load problems/i)).toBeDefined();
     fireEvent.click(screen.getByRole('button', { name: /try again/i }));
     expect(feedMock.refetch).toHaveBeenCalled();
+  });
+
+  it('offers section, exam and sort filters plus a reset', () => {
+    feedMock.problems = [problem()];
+    countMock.data = { total: 1 };
+    renderLibrary();
+    expect(screen.getByLabelText(/section filter/i)).toBeDefined();
+    expect(screen.getByLabelText(/exam folder filter/i)).toBeDefined();
+    expect(screen.getByLabelText(/sort order/i)).toBeDefined();
+    // No filters active yet — no reset button.
+    expect(screen.queryByRole('button', { name: /reset/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Easy' }));
+    const reset = screen.getByRole('button', { name: /reset/i });
+    expect(reset).toBeDefined();
+    fireEvent.click(reset);
+    expect(screen.queryByRole('button', { name: /reset/i })).toBeNull();
   });
 
   it('loads the next cursor page on demand', () => {

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   Avatar,
   AvatarFallback,
+  AvatarImage,
   ComingSoonBadge,
   DropdownMenu,
   DropdownMenuContent,
@@ -15,6 +16,7 @@ import {
   Skeleton,
 } from '@apteez/ui';
 import { useAuth, useLogout } from '@/hooks/use-auth';
+import { useProfile } from '@/hooks/use-profile';
 
 /**
  * Profile dropdown bound to the auth query. Signed-in users see their real
@@ -24,6 +26,10 @@ import { useAuth, useLogout } from '@/hooks/use-auth';
 export function UserMenu(): React.JSX.Element {
   const { user, isLoading } = useAuth();
   const { logout, isLoggingOut } = useLogout();
+  // Profile photo for the top-right avatar; disabled for guests so no
+  // request fires until someone is actually signed in.
+  const { data: profile } = useProfile({ enabled: Boolean(user) });
+  const avatarUrl = profile?.avatarUrl ?? null;
 
   // Skeleton with identical dimensions — no layout jump while loading.
   if (isLoading) {
@@ -38,10 +44,13 @@ export function UserMenu(): React.JSX.Element {
         <button
           type="button"
           aria-label={user ? `Account menu for ${user.displayName}` : 'Account menu'}
-          className="rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="group rounded-full transition-all duration-300 hover:scale-105 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
-          <Avatar className="size-8 border border-border">
-            <AvatarFallback className="text-xs font-semibold">{initial}</AvatarFallback>
+          <Avatar className="size-8 border border-border transition-all duration-300 group-hover:border-primary/60 group-hover:shadow-lg group-hover:shadow-primary/25">
+            {avatarUrl ? <AvatarImage src={avatarUrl} alt={user?.displayName ?? 'Profile photo'} /> : null}
+            <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/60 text-xs font-bold text-primary">
+              {initial}
+            </AvatarFallback>
           </Avatar>
         </button>
       </DropdownMenuTrigger>

@@ -36,37 +36,43 @@ function PathTopics({ path }: { path: LearningPathDetailDto }): React.JSX.Elemen
   }
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      {path.topics.map((topic) => (
-        <Card key={topic.id} className="transition-colors duration-fast hover:border-primary/50">
-          <CardHeader className="p-5">
-            <div className="flex items-start justify-between gap-3">
-              <CardTitle className="text-card-title">{topic.title}</CardTitle>
-              <Badge variant="secondary">
-                {topic.lessonCount} lesson{topic.lessonCount === 1 ? '' : 's'}
-              </Badge>
-            </div>
-            {topic.summary ? <CardDescription>{topic.summary}</CardDescription> : null}
-          </CardHeader>
-          <CardContent className="space-y-3 p-5 pt-0">
-            {topic.completedPercent !== undefined ? (
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>
-                    {topic.completedLessons ?? 0} of {topic.lessonCount} complete
-                  </span>
-                  <span className="font-metric">{topic.completedPercent}%</span>
-                </div>
-                <Progress value={topic.completedPercent} />
+      {path.topics.map((topic, index) => (
+        <div
+          key={topic.id}
+          className="animate-fade-up"
+          style={{ animationDelay: `${Math.min(index, 6) * 60}ms` }}
+        >
+          <Card className="card-lift card-shine group h-full">
+            <CardHeader className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <CardTitle className="text-card-title transition-colors group-hover:text-primary">{topic.title}</CardTitle>
+                <Badge variant="secondary" className="shrink-0">
+                  {topic.lessonCount} lesson{topic.lessonCount === 1 ? '' : 's'}
+                </Badge>
               </div>
-            ) : null}
-            <Button asChild variant="outline" className="w-full">
-              <Link href={`/learn/${path.slug}/${topic.slug}`}>
-                Study topic
-                <ArrowRight aria-hidden />
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
+              {topic.summary ? <CardDescription className="line-clamp-2">{topic.summary}</CardDescription> : null}
+            </CardHeader>
+            <CardContent className="space-y-3 p-5 pt-0">
+              {topic.completedPercent !== undefined ? (
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>
+                      {topic.completedLessons ?? 0} of {topic.lessonCount} complete
+                    </span>
+                    <span className="font-metric font-bold text-primary">{topic.completedPercent}%</span>
+                  </div>
+                  <Progress value={topic.completedPercent} size="sm" />
+                </div>
+              ) : null}
+              <Button asChild variant="outline" className="w-full transition-all duration-300 group-hover:border-primary/50 group-hover:shadow-md group-hover:shadow-primary/15">
+                <Link href={`/learn/${path.slug}/${topic.slug}`}>
+                  Study topic
+                  <ArrowRight className="transition-transform group-hover:translate-x-0.5" aria-hidden />
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
       ))}
     </div>
   );

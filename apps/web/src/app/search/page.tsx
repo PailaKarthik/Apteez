@@ -108,6 +108,7 @@ function SearchPageInner(): React.JSX.Element {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow="Find anything in the arena"
         title="Search"
         description="Problems, topics, learning, contests, events and discussions."
       />
@@ -127,7 +128,7 @@ function SearchPageInner(): React.JSX.Element {
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as SearchTab)}>
         {/* Scrollable tab row: seven tabs never fit a 360px viewport. */}
-        <TabsList className="max-w-full justify-start overflow-x-auto">
+        <TabsList className="glass sticky top-top-bar z-10 max-w-full justify-start overflow-x-auto shadow-sm">
           {TABS.map((entry) => (
             <TabsTrigger key={entry.value} value={entry.value} className="shrink-0 whitespace-nowrap">
               {entry.label}
@@ -178,7 +179,7 @@ function SearchPageInner(): React.JSX.Element {
       {trimmed.length === 0 ? (
         <div className="space-y-6">
           {recent.data && recent.data.items.length > 0 ? (
-            <section aria-label="Recent searches" className="space-y-2">
+            <section aria-label="Recent searches" className="page-enter space-y-2">
               <div className="flex items-center justify-between">
                 <h2 className="text-section-title">Recent searches</h2>
                 <Button variant="ghost" size="sm" onClick={() => clearRecent.mutate()}>
@@ -192,6 +193,7 @@ function SearchPageInner(): React.JSX.Element {
                     variant="outline"
                     size="sm"
                     onClick={() => submit(row.query)}
+                    className="rounded-full transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md hover:shadow-primary/15"
                   >
                     {row.query}
                   </Button>
@@ -200,11 +202,20 @@ function SearchPageInner(): React.JSX.Element {
             </section>
           ) : null}
           {trending.data ? (
-            <section aria-label="Trending" className="space-y-4">
-              <h2 className="text-section-title">Trending this week</h2>
+            <section aria-label="Trending" className="page-enter-1 space-y-4">
+              <div className="flex items-center gap-3">
+                <h2 className="shrink-0 text-section-title">Trending this week</h2>
+                <span className="h-px flex-1 bg-gradient-to-r from-primary/40 to-transparent" aria-hidden />
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                {trending.data.problems.slice(0, 4).map((problem) => (
-                  <ProblemCard key={problem.id} problem={problem} />
+                {trending.data.problems.slice(0, 4).map((problem, index) => (
+                  <div
+                    key={problem.id}
+                    className="animate-fade-up"
+                    style={{ animationDelay: `${index * 70}ms` }}
+                  >
+                    <ProblemCard problem={problem} />
+                  </div>
                 ))}
               </div>
             </section>
@@ -248,7 +259,23 @@ function GroupedResults({
   onOpenTab: (tab: SearchTab) => void;
 }): React.JSX.Element {
   if (loading) {
-    return <LoadingState title="Searching..." />;
+    return (
+      <div className="animate-fade-in space-y-4" aria-busy="true" aria-label="Searching">
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        <div className="skeleton-shine h-6 w-40 rounded-md" />
+        <div className="grid gap-3 sm:grid-cols-2">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="rounded-xl border border-border p-4" aria-hidden>
+              <div className="skeleton-shine h-5 w-2/3 rounded-md" />
+              <div className="skeleton-shine mt-2 h-3 w-full rounded-md" />
+              <div className="skeleton-shine mt-2 h-3 w-1/2 rounded-md" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
   if (error || !data) {
     return <ErrorState description={error ?? 'Search failed. Try again.'} />;
@@ -343,12 +370,26 @@ function GroupedResults({
     <div className="space-y-6">
       {sections
         .filter((section) => section.count > 0)
-        .map((section) => (
-          <section key={section.tab} aria-label={section.title} className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-section-title">{section.title}</h2>
-              <Button variant="ghost" size="sm" onClick={() => onOpenTab(section.tab)}>
-                View all
+        .map((section, sIndex) => (
+          <section
+            key={section.tab}
+            aria-label={section.title}
+            className="animate-fade-up space-y-3"
+            style={{ animationDelay: `${sIndex * 80}ms` }}
+          >
+            <div className="flex items-center gap-3">
+              <h2 className="shrink-0 text-section-title">{section.title}</h2>
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 font-metric text-xs font-bold text-primary">
+                {section.count}
+              </span>
+              <span className="h-px flex-1 bg-gradient-to-r from-primary/30 to-transparent" aria-hidden />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onOpenTab(section.tab)}
+                className="shrink-0 transition-all hover:gap-2.5 hover:text-primary"
+              >
+                View all →
               </Button>
             </div>
             {section.body}
@@ -378,7 +419,22 @@ function PagedResults({
   loadingMore: boolean;
 }): React.JSX.Element {
   if (isLoading) {
-    return <LoadingState title="Searching..." />;
+    return (
+      <div className="animate-fade-in space-y-3" aria-busy="true" aria-label="Searching">
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="rounded-xl border border-border p-4" aria-hidden>
+              <div className="skeleton-shine h-5 w-2/3 rounded-md" />
+              <div className="skeleton-shine mt-2 h-3 w-full rounded-md" />
+              <div className="skeleton-shine mt-2 h-3 w-1/2 rounded-md" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
   if (error) {
     return <ErrorState description={error} />;

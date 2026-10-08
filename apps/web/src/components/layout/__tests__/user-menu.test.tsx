@@ -16,6 +16,10 @@ vi.mock('@/hooks/use-auth', () => ({
   useLogout: () => ({ logout: authMock.logout, isLoggingOut: authMock.isLoggingOut }),
 }));
 
+vi.mock('@/hooks/use-profile', () => ({
+  useProfile: () => ({ data: undefined }),
+}));
+
 vi.mock('@apteez/ui', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   const ReactImpl = await import('react');

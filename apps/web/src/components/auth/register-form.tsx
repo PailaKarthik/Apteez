@@ -23,7 +23,6 @@ import {
   FormLabel,
   FormMessage,
   Input,
-  LoadingState,
 } from '@apteez/ui';
 import { registerSchema, type RegisterInput } from '@apteez/validation';
 import { ApiError, apiFetch } from '@/lib/api-client';
@@ -80,18 +79,36 @@ export function RegisterForm(): React.JSX.Element {
   });
 
   if (isLoading || isAuthenticated) {
-    return <LoadingState title="Checking your session…" />;
+    return (
+      <div className="mx-auto w-full max-w-md animate-fade-in space-y-4 py-8" aria-busy="true" aria-label="Checking your session">
+        <div className="loading-rail h-1" aria-hidden>
+          <span />
+        </div>
+        <div className="rounded-2xl border border-border p-6">
+          <div className="skeleton-shine mx-auto h-7 w-48 rounded-lg" />
+          <div className="skeleton-shine mt-4 h-10 w-full rounded-lg" />
+          <div className="skeleton-shine mt-2 h-10 w-full rounded-lg" />
+          <div className="skeleton-shine mt-2 h-10 w-full rounded-lg" />
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="mx-auto w-full max-w-md space-y-6 py-8">
-      <div className="space-y-2 text-center">
-        <h1 className="text-2xl font-bold tracking-tight">Create your account</h1>
+      <div className="page-enter space-y-2 text-center">
+        <p className="mx-auto inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/[0.07] px-3 py-1 text-xs font-semibold text-primary">
+          Free forever · 2 minutes
+        </p>
+        <h1 className="text-3xl font-extrabold tracking-tight">
+          Create your <span className="gradient-text">account</span>
+        </h1>
         <p className="text-sm text-muted-foreground">
           One account for challenges, contests and contributions.
         </p>
       </div>
-      <Card>
+      <Card className="page-enter-1 overflow-hidden shadow-xl shadow-primary/10">
+        <span className="block h-1 bg-gradient-to-r from-primary via-accent-foreground to-primary" aria-hidden />
         <CardHeader>
           <CardTitle className="text-base">Sign up</CardTitle>
           <CardDescription>Pick a username — it will be visible on leaderboards.</CardDescription>
@@ -179,8 +196,12 @@ export function RegisterForm(): React.JSX.Element {
                     {formError}
                   </p>
                 ) : null}
-                <Button type="submit" className="w-full" disabled={mutation.isPending}>
-                  {mutation.isPending ? 'Creating account…' : 'Create account'}
+                <Button
+                  type="submit"
+                  className="btn-sheen w-full shadow-lg shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 disabled:hover:translate-y-0 disabled:hover:shadow-none"
+                  disabled={mutation.isPending}
+                >
+                  {mutation.isPending ? <span className="typing-dots">Creating account</span> : 'Create account'}
                 </Button>
               </form>
             </Form>

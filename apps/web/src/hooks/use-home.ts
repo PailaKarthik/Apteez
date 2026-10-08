@@ -10,6 +10,10 @@ export interface LibraryFilters {
   difficulty?: 'EASY' | 'MEDIUM' | 'HARD';
   /** Tri-state: true = solved, false = unsolved, undefined = all. */
   solved?: boolean;
+  /** Category slug — narrows the library to one practice area. */
+  category?: string;
+  /** Exam-tag slug — narrows the library to one exam folder. */
+  exam?: string;
 }
 
 /** Home exam-pattern folders — live counts, top categories, difficulty mix. */
@@ -52,6 +56,8 @@ export function useProblemsCount(filters: LibraryFilters) {
           search: filters.search,
           difficulty: filters.difficulty,
           solved: filters.solved,
+          category: filters.category,
+          exam: filters.exam,
         })}`,
       ),
     // COUNT scans the same predicate as the feed — keep it warm across

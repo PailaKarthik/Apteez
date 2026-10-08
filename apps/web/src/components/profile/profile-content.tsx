@@ -29,20 +29,33 @@ import { RecentActivityFeed } from './recent-activity';
 import { RecentPractice } from './recent-practice';
 import { WeakAreas } from './weak-areas';
 
+const STAT_WASH: Record<string, string> = {
+  Solved: 'from-primary/15 to-transparent',
+  Accuracy: 'from-success/15 to-transparent',
+  'Day streak': 'from-warning/15 to-transparent',
+  Points: 'from-gold/15 to-transparent',
+};
+
 function StatCard({
   icon: Icon,
   label,
   value,
+  index = 0,
 }: {
   icon: typeof Flame;
   label: string;
   value: string;
+  index?: number;
 }): React.JSX.Element {
   return (
-    <Card>
-      <CardContent className="flex items-center gap-3 p-4">
-        <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <Icon className="size-4" aria-hidden />
+    <Card
+      className="card-lift animate-fade-up relative overflow-hidden"
+      style={{ animationDelay: `${index * 70}ms` }}
+    >
+      <div className={`absolute inset-0 bg-gradient-to-br ${STAT_WASH[label] ?? 'from-primary/10 to-transparent'}`} aria-hidden />
+      <CardContent className="relative flex items-center gap-3 p-4">
+        <span className="icon-tile size-10 shrink-0" aria-hidden>
+          <Icon className="size-4" />
         </span>
         <span>
           <span className="block font-metric text-lg font-bold leading-none text-foreground">
@@ -72,11 +85,18 @@ export function ProfileContent(): React.JSX.Element {
 
   if (!profile) {
     return (
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard icon={ListChecks} label="Solved" value="—" />
-        <StatCard icon={Target} label="Accuracy" value="—" />
-        <StatCard icon={Flame} label="Day streak" value="—" />
-        <StatCard icon={Coins} label="Points" value="—" />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-busy="true" aria-label="Loading profile">
+        {[0, 1, 2, 3].map((i) => (
+          <Card key={i} className="animate-fade-up overflow-hidden" style={{ animationDelay: `${i * 70}ms` }} aria-hidden>
+            <CardContent className="flex items-center gap-3 p-4">
+              <div className="skeleton-shine size-10 shrink-0 rounded-xl" />
+              <div className="space-y-1.5">
+                <div className="skeleton-shine h-5 w-14 rounded-md" />
+                <div className="skeleton-shine h-3 w-20 rounded-md" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
     );
   }
@@ -91,6 +111,7 @@ export function ProfileContent(): React.JSX.Element {
           icon={ListChecks}
           label="Solved"
           value={String(performance?.distinctSolved ?? 0)}
+          index={0}
         />
         <StatCard
           icon={Target}
@@ -100,9 +121,10 @@ export function ProfileContent(): React.JSX.Element {
               ? '—'
               : `${performance.accuracy}%`
           }
+          index={1}
         />
-        <StatCard icon={Flame} label="Day streak" value={String(streak?.current ?? 0)} />
-        <StatCard icon={Coins} label="Points" value={String(points?.total ?? 0)} />
+        <StatCard icon={Flame} label="Day streak" value={String(streak?.current ?? 0)} index={2} />
+        <StatCard icon={Coins} label="Points" value={String(points?.total ?? 0)} index={3} />
       </div>
       <ProblemAnalytics
         overall={performance}
@@ -125,17 +147,19 @@ export function ProfileContent(): React.JSX.Element {
         <RecentPractice />
       </div>
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardContent className="space-y-2 p-6">
+        <Card className="card-lift card-shine relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-br from-success/10 to-transparent" aria-hidden />
+          <CardContent className="relative space-y-2 p-6">
             <p className="text-card-title font-semibold">Contributions</p>
             <p className="font-metric text-2xl font-bold">{approved}</p>
             <p className="text-sm text-muted-foreground">approved questions</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="space-y-2 p-6">
+        <Card className="card-lift card-shine relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent" aria-hidden />
+          <CardContent className="relative space-y-2 p-6">
             <p className="text-card-title font-semibold">Events & contests</p>
-            <p className="font-metric text-2xl font-bold">
+            <p className="gradient-text-cool font-metric text-2xl font-extrabold">
               {(competitive?.events.length ?? 0) + (competitive?.contests.length ?? 0)}
             </p>
             <p className="text-sm text-muted-foreground">participations</p>
