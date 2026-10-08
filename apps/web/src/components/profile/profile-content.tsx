@@ -1,7 +1,8 @@
 'use client';
 
 import { Coins, Flame, ListChecks, Target } from 'lucide-react';
-import { Card, CardContent } from '@apteez/ui';
+import { Button, Card, CardContent, ErrorState } from '@apteez/ui';
+import { ApiError } from '@/lib/api-client';
 import {
   useAchievements,
   useActivityHeatmap,
@@ -69,9 +70,10 @@ function StatCard({
 }
 
 export function ProfileContent(): React.JSX.Element {
-  const { data: profile } = useProfile();
+  const profileQuery = useProfile();
+  const { data: profile } = profileQuery;
   const { data: performance } = usePerformance();
-  const { data: streak } = useStreak();
+  const { data: streak } = useStreak({ enabled: !profileQuery.isError });
   const { data: points } = usePointsSummary();
   const { data: heatmap, isLoading: heatmapLoading } = useActivityHeatmap(182);
   const { data: domains, isLoading: domainsLoading } = useDomainPerformance();
@@ -82,6 +84,35 @@ export function ProfileContent(): React.JSX.Element {
   const { data: achievements, isLoading: achievementsLoading } = useAchievements();
   const { data: contributions } = useProfileContributions();
   const { data: competitive } = useProfileEvents();
+
+  // A failed /profile/me (cold free-tier boot, expired session, transient
+  // 500) previously rendered an endless skeleton because only `!profile`
+  // was checked — no error branch existed. Surface an honest, retryable
+  // error instead so a deployed hiccup never looks like a hung page.
+  if (profileQuery.isError) {
+    const message =
+      profileQuery.error instanceof ApiError
+        ? profileQuery.error.message
+        : 'Could not load your profile.';
+    const hint =
+      profileQuery.error instanceof ApiError && profileQuery.error.kind === 'unauthorized'
+        ? 'Your session may have expired. Sign in again, then retry.'
+        : 'The server may be waking up (free-tier cold start). Wait a few seconds, then retry.';
+    return (
+      <div className="space-y-4">
+        <ErrorState
+          title="Could not load your profile"
+          description={`${message} ${hint}`}
+          onRetry={() => void profileQuery.refetch()}
+        />
+        <div className="flex justify-center">
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            Reload page
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (!profile) {
     return (

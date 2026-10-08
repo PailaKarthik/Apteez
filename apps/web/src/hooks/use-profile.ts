@@ -24,6 +24,10 @@ export function useProfile(options?: { enabled?: boolean }) {
     queryFn: () => apiFetch<ProfileDto>('/profile/me'),
     staleTime: 30_000,
     enabled: options?.enabled ?? true,
+    // One retry only: the profile page mounts ~13 queries at once, and the
+    // default 3x retry turns one cold free-tier boot into a ~40-request
+    // thundering herd. The UI surfaces an explicit retry button instead.
+    retry: 1,
   });
 }
 

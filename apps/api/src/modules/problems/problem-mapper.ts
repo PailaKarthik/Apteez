@@ -116,10 +116,20 @@ export class ProblemMapper {
     userState?: ProblemUserState,
   ): Promise<ProblemDetailDto> {
     const summary = await this.toSummary(row, stats, userState);
-    const urlByKey = await this.storage.getDownloadUrls([
-      ...row.assets.map((asset) => asset.objectKey),
-      ...row.options.flatMap((option) => (option.assetKey ? [option.assetKey] : [])),
-    ]);
+    // Asset URLs must never fail the whole detail read: after a deploy the
+    // storage backend/region/keys can lag behind the DB, and a single bad
+    // object key previously 500'd the entire image-based problem. Resolve
+    // best-effort — missing URLs render as '' and the UI shows a retryable
+    // placeholder instead of "Could not load this problem".
+    let urlByKey = new Map<string, string>();
+    try {
+      urlByKey = await this.storage.getDownloadUrls([
+        ...row.assets.map((asset) => asset.objectKey),
+        ...row.options.flatMap((option) => (option.assetKey ? [option.assetKey] : [])),
+      ]);
+    } catch {
+      urlByKey = new Map<string, string>();
+    }
 
     const assets: ProblemAssetDto[] = row.assets.map((asset) => ({
       id: asset.id,

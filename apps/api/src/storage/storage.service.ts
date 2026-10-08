@@ -46,9 +46,19 @@ export class StorageService {
   /** Batch URL minting for list/detail projections (no N+1). */
   async getDownloadUrls(keys: readonly string[]): Promise<Map<string, string>> {
     const unique = [...new Set(keys)];
-    const resolved = await Promise.all(
+    // Fault-tolerant by design: one missing/invalid key (deleted object,
+    // stale DB reference, transient S3 signing blip after deploy) must never
+    // 500 the whole problem/profile payload. Failed keys are simply absent —
+    // callers fall back to ''/null per asset.
+    const settled = await Promise.allSettled(
       unique.map(async (key) => [key, await this.getDownloadUrl(key)] as const),
     );
+    const resolved: Array<readonly [string, string]> = [];
+    for (const entry of settled) {
+      if (entry.status === 'fulfilled') {
+        resolved.push(entry.value);
+      }
+    }
     return new Map(resolved);
   }
 

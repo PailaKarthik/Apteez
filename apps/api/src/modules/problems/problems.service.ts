@@ -211,8 +211,9 @@ export class ProblemsService {
 
   /**
    * Deterministic "next problem": the next published problem after this one
-   * in the same topic (falling back to newest overall). Query-backed — never
-   * a client-side dataset.
+   * in the same topic (by creation order), wrapping to the oldest in the
+   * topic at the end, and falling back to newest overall for single-problem
+   * topics. Query-backed — never a client-side dataset.
    */
   async nextProblem(currentId: string): Promise<{ id: string } | null> {
     const current = await this.prisma.problem.findFirst({
@@ -222,17 +223,35 @@ export class ProblemsService {
     if (!current) {
       return null;
     }
-    const sameTopic = await this.prisma.problem.findFirst({
+    // Next-newer in the same topic (creation order, id as tie-break).
+    const newer = await this.prisma.problem.findFirst({
+      where: {
+        status: 'PUBLISHED',
+        topicId: current.topicId,
+        id: { not: currentId },
+        OR: [
+          { createdAt: { gt: current.createdAt } },
+          { createdAt: current.createdAt, id: { gt: currentId } },
+        ],
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true },
+    });
+    if (newer) {
+      return newer;
+    }
+    // End of the topic: wrap to its oldest so Next never dead-ends.
+    const wrap = await this.prisma.problem.findFirst({
       where: {
         status: 'PUBLISHED',
         topicId: current.topicId,
         id: { not: currentId },
       },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: { id: true },
     });
-    if (sameTopic) {
-      return sameTopic;
+    if (wrap) {
+      return wrap;
     }
     return this.prisma.problem.findFirst({
       where: { status: 'PUBLISHED', id: { not: currentId } },

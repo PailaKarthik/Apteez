@@ -282,6 +282,15 @@ export function useChallenge(): UseChallengeResult {
     };
   }, [clearSlowTimer]);
 
+  // Auto-connect on mount: the arena previously only connected lazily inside
+  // startMatchmaking, so first paint sat on "not connected" with the domain
+  // buttons disabled and no way forward until the socket's own autoConnect
+  // happened to fire. Dial explicitly so the connecting banner resolves fast
+  // and a dropped socket redials on remount.
+  React.useEffect(() => {
+    connect();
+  }, [connect]);
+
   const startMatchmaking = React.useCallback(
     (domainSlug: string): void => {
       connect();

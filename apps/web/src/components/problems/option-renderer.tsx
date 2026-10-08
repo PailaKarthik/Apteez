@@ -1,5 +1,7 @@
 'use client';
 
+import * as React from 'react';
+import { ImageOff } from 'lucide-react';
 import type { ProblemOptionDto } from '@apteez/types';
 import { cn } from '@apteez/ui';
 
@@ -26,6 +28,10 @@ export function OptionRenderer({
 }: OptionRendererProps): React.JSX.Element {
   const interactive = Boolean(onSelect) && !disabled;
   const letter = LETTERS[option.position] ?? String(option.position + 1);
+  const [imgFailed, setImgFailed] = React.useState(false);
+  React.useEffect(() => {
+    setImgFailed(false);
+  }, [option.assetUrl]);
 
   return (
     <button
@@ -61,13 +67,22 @@ export function OptionRenderer({
           </span>
         ) : null}
         {option.assetUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element -- storage assets may be SVG
-          <img
-            src={option.assetUrl}
-            alt={`Option ${letter}`}
-            loading="lazy"
-            className="max-h-40 w-auto max-w-full rounded-lg border border-border object-contain"
-          />
+          imgFailed ? (
+            <span className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+              <ImageOff className="size-4 shrink-0" aria-hidden />
+              Option image unavailable — the text above still counts. Try reopening the question.
+            </span>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element -- storage assets may be SVG
+            <img
+              src={option.assetUrl}
+              alt={`Option ${letter}`}
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              onError={() => setImgFailed(true)}
+              className="max-h-40 w-auto max-w-full rounded-lg border border-border object-contain"
+            />
+          )
         ) : null}
       </span>
     </button>

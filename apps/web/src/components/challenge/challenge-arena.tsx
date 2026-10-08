@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, History, Loader2, RefreshCw, Swords, TriangleAlert, Trophy, X } from 'lucide-react';
+import { Check, History, Loader2, RefreshCw, Swords, Trophy, X } from 'lucide-react';
 import * as React from 'react';
 import type { ChallengeMatchedPayload, ChallengeStateDto } from '@apteez/types';
 import {
@@ -198,6 +198,12 @@ function DomainPicker({
       </div>
       <p className="mt-3 text-xs text-muted-foreground">
         Rated vs a live opponent · solo run starts automatically if nobody joins · solo is unrated.
+        {isConnecting ? (
+          <span className="mt-1 flex items-center gap-1.5 font-semibold text-primary" role="status">
+            <Loader2 className="size-3 animate-spin" aria-hidden />
+            Waiting for the server connection above — pick a battlefield as soon as it lights up.
+          </span>
+        ) : null}
       </p>
     </div>
   );
@@ -820,10 +826,40 @@ export function ChallengeArena(): React.JSX.Element {
     <div className="space-y-4">
       <DuelHero />
       {!connected ? (
-        <p className="flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-          <TriangleAlert className="size-3.5 animate-pulse-soft" aria-hidden />
-          <span className="typing-dots">Connecting to the challenge server</span>
-        </p>
+        <div
+          role="status"
+          aria-live="polite"
+          className="animate-fade-in relative overflow-hidden rounded-2xl border-2 border-primary/40 bg-gradient-to-r from-primary/[0.12] via-card to-primary/[0.08] p-4 shadow-lg shadow-primary/15"
+        >
+          <div className="loading-rail mb-3 h-1.5" aria-hidden>
+            <span />
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="relative flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/15" aria-hidden>
+              <Loader2 className="size-5 animate-spin text-primary" />
+              <span className="absolute inset-0 animate-ping rounded-full bg-primary/20" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-foreground">
+                <span className="typing-dots">Connecting to the challenge server</span>
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                Waking up the live matchmaking server — after a deploy this can take
+                ~30 seconds (cold start). Domains unlock the moment we&apos;re connected;
+                please wait.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0 border-primary/40"
+              onClick={() => challenge.connect()}
+            >
+              <RefreshCw aria-hidden />
+              Retry
+            </Button>
+          </div>
+        </div>
       ) : null}
       {error ? (
         <p role="alert" className="animate-fade-in rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">

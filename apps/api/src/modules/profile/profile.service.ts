@@ -177,7 +177,16 @@ export class ProfileService {
       // Best-effort cleanup of the replaced object; never fails the upload.
       await this.storage.delete(previous.avatarKey).catch(() => undefined);
     }
-    return { avatarKey: key, avatarUrl: await this.storage.getDownloadUrl(key) };
+    // The bytes are already stored at this point — a transient signing blip
+    // must not turn a successful upload into a 500. Fall back to an empty
+    // URL; the client refetches the profile (which resolves the URL lazily).
+    let avatarUrl = '';
+    try {
+      avatarUrl = await this.storage.getDownloadUrl(key);
+    } catch {
+      avatarUrl = '';
+    }
+    return { avatarKey: key, avatarUrl };
   }
 
   /** Privacy-gated public identity. Private profiles 404 for strangers. */
@@ -226,11 +235,19 @@ export class ProfileService {
       ...challengeRatings.map((row) => row.rating),
       contestRating?.rating ?? 0,
     );
+    let avatarUrl: string | null = null;
+    if (user.avatarKey) {
+      try {
+        avatarUrl = await this.storage.getDownloadUrl(user.avatarKey);
+      } catch {
+        avatarUrl = null;
+      }
+    }
     return {
       username: user.username,
       displayName: user.displayName,
       avatarKey: user.avatarKey,
-      avatarUrl: user.avatarKey ? await this.storage.getDownloadUrl(user.avatarKey) : null,
+      avatarUrl,
       country: user.country,
       institution: user.institution,
       bio: user.bio,
@@ -374,13 +391,26 @@ export class ProfileService {
     isPrivate: boolean;
     createdAt: Date;
   }): Promise<ProfileDto> {
+    // Avatar URL minting must never fail the whole profile read: after a
+    // deploy the storage backend/keys can be briefly unreachable (wrong
+    // region, rotated keys, deleted object), and that previously 500'd
+    // GET /profile/me — the entire profile page showed a server error.
+    // A missing URL degrades to null; the UI falls back to initials.
+    let avatarUrl: string | null = null;
+    if (user.avatarKey) {
+      try {
+        avatarUrl = await this.storage.getDownloadUrl(user.avatarKey);
+      } catch {
+        avatarUrl = null;
+      }
+    }
     return {
       id: user.id,
       email: user.email,
       username: user.username,
       displayName: user.displayName,
       avatarKey: user.avatarKey,
-      avatarUrl: user.avatarKey ? await this.storage.getDownloadUrl(user.avatarKey) : null,
+      avatarUrl,
       country: user.country,
       institution: user.institution,
       bio: user.bio,
