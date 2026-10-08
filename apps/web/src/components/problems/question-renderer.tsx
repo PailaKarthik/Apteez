@@ -15,10 +15,16 @@ export interface QuestionRendererProps {
 function AssetFigure({ asset }: { asset: ProblemAssetDto }): React.JSX.Element | null {
   const [failed, setFailed] = React.useState(false);
   const [attempt, setAttempt] = React.useState(0);
+  // A fresh URL (problem refetch after presigned-URL expiry) clears the error.
+  React.useEffect(() => {
+    setFailed(false);
+  }, [asset.url]);
   // Backend fault-tolerance mints '' when a storage key can't be signed
   // (stale key, region/credential blip after deploy) so the problem still
   // loads. Both '' and a broken download render a retryable placeholder —
-  // never a broken-image icon and never a whole-page error.
+  // never a broken-image icon and never a whole-page error. NOTE: retry
+  // re-requests the SAME url (key remount only) — appending a cache-buster
+  // query param would invalidate the S3 presigned signature and 403.
   if (!asset.url || failed) {
     return (
       <figure className="rounded-xl border border-dashed border-border bg-elevated p-6 text-center">
@@ -54,7 +60,7 @@ function AssetFigure({ asset }: { asset: ProblemAssetDto }): React.JSX.Element |
       {/* eslint-disable-next-line @next/next/no-img-element -- storage assets may be SVG, which next/image cannot optimise */}
       <img
         key={`${asset.id}:${attempt}`}
-        src={attempt > 0 ? `${asset.url}${asset.url.includes('?') ? '&' : '?'}retry=${attempt}` : asset.url}
+        src={asset.url}
         alt={asset.altText ?? 'Question illustration'}
         loading="lazy"
         referrerPolicy="no-referrer"
